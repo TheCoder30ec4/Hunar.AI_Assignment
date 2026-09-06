@@ -28,7 +28,7 @@ def _headers():
 # or `update-agent` (to apply changes to the existing HUNAR_AGENT_ID).
 AGENT_SETTINGS = {
     "name": "Personal Caller",
-    "language": "TELUGU",
+    "language": "ENGLISH",
     "voice_persona": "NEHA",
     "persona_name": "NEHA",
     "agent_prompt": "You are a friendly assistant calling to check in.",
@@ -56,7 +56,7 @@ def update_agent():
 
 def call_me():
     agent_id = os.environ["HUNAR_AGENT_ID"]
-    mobile_number = "+918247350941"  # E.164, e.g. +1234567890
+    mobile_number = "+918790800172"  # E.164, e.g. +1234567890
 
     response = requests.post(
         f"{BASE_URL}/calls/",
