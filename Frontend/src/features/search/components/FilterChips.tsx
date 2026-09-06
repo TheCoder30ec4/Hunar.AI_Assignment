@@ -1,9 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { XIcon } from 'lucide-react'
-import { useState, type ReactNode } from 'react'
 import { useForm } from 'react-hook-form'
 
-import { Badge } from '@/shared/components/ui/badge'
 import { Button } from '@/shared/components/ui/button'
 import { Input } from '@/shared/components/ui/input'
 import {
@@ -14,12 +11,19 @@ import {
   SelectValue,
 } from '@/shared/components/ui/select'
 
+import { ChipRow } from './ChipRow'
 import { searchSpecFormSchema, type SearchSpec } from '../schemas/search-spec'
 
 const SENIORITY_OPTIONS = [
   'intern', 'junior', 'mid', 'senior', 'staff', 'principal', 'lead',
 ] as const
 
+/**
+ * "Edit anything that's wrong before searching" — every array field here is
+ * an editable ChipRow because these are exactly the values that get sent to
+ * the provider APIs; a bad parse on one field must never block editing the
+ * others.
+ */
 export function FilterChips({
   initialSpec,
   onSubmit,
@@ -30,7 +34,6 @@ export function FilterChips({
   readonly isSubmitting: boolean
 }) {
   const {
-    register,
     handleSubmit,
     setValue,
     watch,
@@ -40,154 +43,163 @@ export function FilterChips({
     defaultValues: initialSpec,
   })
 
-  const skills = watch('skills')
-  const [skillDraft, setSkillDraft] = useState('')
+  const values = watch()
 
-  const addSkill = (): void => {
-    const trimmed = skillDraft.trim()
-    if (trimmed.length === 0 || skills.includes(trimmed)) return
-    setValue('skills', [...skills, trimmed], { shouldValidate: true })
-    setSkillDraft('')
-  }
+  type ArrayFieldName = {
+    [K in keyof SearchSpec]: SearchSpec[K] extends string[] ? K : never
+  }[keyof SearchSpec]
 
-  const removeSkill = (skill: string): void => {
-    setValue(
-      'skills',
-      skills.filter((existing) => existing !== skill),
-      { shouldValidate: true },
-    )
-  }
+  const arrayField = (field: ArrayFieldName) => ({
+    values: values[field],
+    onAdd: (value: string) => {
+      const current = values[field]
+      if (current.includes(value)) return
+      setValue(field, [...current, value], { shouldValidate: true })
+    },
+    onRemove: (value: string) => {
+      const current = values[field]
+      setValue(field, current.filter((v) => v !== value), { shouldValidate: true })
+    },
+  })
 
   return (
     <form
       onSubmit={(event) => void handleSubmit(onSubmit)(event)}
       noValidate
-      className="flex flex-col gap-4 border-t border-[var(--color-line)] pt-4"
+      className="flex flex-col"
     >
-      <h2 className="text-[13px] font-semibold text-[var(--color-ink)]">
-        Review the parsed filters
-      </h2>
+      <p className="pb-2 text-[13px] text-[var(--color-ink-muted)]">
+        Edit anything that&apos;s wrong before searching. These filters are what gets sent to
+        the providers.
+      </p>
 
-      <Field label="Title" htmlFor="title" error={errors.title?.message}>
-        <Input id="title" {...register('title')} />
-      </Field>
+      <div className="divide-y divide-[var(--color-line)] rounded-[var(--radius-control)] border border-[var(--color-line)] bg-[var(--color-surface)] px-4">
+        <ChipRow label="Title" {...arrayField('titles')} error={errors.titles?.message} />
 
-      <Field label="Skills" htmlFor="skill-draft" error={errors.skills?.message}>
-        <div className="flex flex-wrap gap-1.5">
-          {skills.map((skill) => (
-            <Badge key={skill} withDot={false} className="gap-1 pr-1">
-              {skill}
-              <button
-                type="button"
-                onClick={() => removeSkill(skill)}
-                aria-label={`Remove ${skill}`}
-                className="rounded-full p-0.5 hover:bg-[var(--color-line)]"
-              >
-                <XIcon className="size-3" />
-              </button>
-            </Badge>
-          ))}
+        <div className="flex items-center gap-4 py-2">
+          <span className="w-32 shrink-0 text-[13px] text-[var(--color-ink-muted)]">
+            Seniority
+          </span>
+          <Select
+            value={values.seniority}
+            onValueChange={(value) =>
+              setValue('seniority', value as SearchSpec['seniority'], { shouldValidate: true })
+            }
+          >
+            <SelectTrigger id="seniority" className="w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SENIORITY_OPTIONS.map((level) => (
+                <SelectItem key={level} value={level}>
+                  {level}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
-        <div className="mt-1.5 flex gap-2">
-          <Input
-            id="skill-draft"
-            value={skillDraft}
-            onChange={(event) => setSkillDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.preventDefault()
-                addSkill()
+
+        <ChipRow
+          label="Must have"
+          {...arrayField('skills')}
+          error={errors.skills?.message}
+          placeholder="Add a required skill"
+        />
+
+        <ChipRow
+          label="Nice to have"
+          {...arrayField('niceToHaveSkills')}
+          placeholder="Add a bonus skill"
+        />
+
+        <div className="flex items-center gap-4 py-2">
+          <span className="w-32 shrink-0 text-[13px] text-[var(--color-ink-muted)]">
+            Location
+          </span>
+          <div className="flex flex-1 items-center gap-2">
+            <Input
+              id="location"
+              value={values.location}
+              onChange={(event) => setValue('location', event.target.value, { shouldValidate: true })}
+              className="max-w-56"
+            />
+            <Input
+              type="number"
+              min={0}
+              value={values.locationRadiusKm ?? ''}
+              onChange={(event) =>
+                setValue(
+                  'locationRadiusKm',
+                  event.target.value === '' ? null : Number(event.target.value),
+                )
               }
-            }}
-            placeholder="Add a skill and press Enter"
-          />
-          <Button type="button" variant="secondary" onClick={addSkill}>
-            Add
-          </Button>
+              placeholder="Radius (km)"
+              className="w-32"
+              aria-label="Location radius in kilometres"
+            />
+          </div>
+          {errors.location ? (
+            <p className="text-[12px] text-[var(--color-sig-bad)]">{errors.location.message}</p>
+          ) : null}
         </div>
-      </Field>
 
-      <Field label="Seniority" htmlFor="seniority" error={errors.seniority?.message}>
-        <Select
-          value={watch('seniority')}
-          onValueChange={(value) =>
-            setValue('seniority', value as SearchSpec['seniority'], { shouldValidate: true })
-          }
-        >
-          <SelectTrigger id="seniority">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {SENIORITY_OPTIONS.map((level) => (
-              <SelectItem key={level} value={level}>
-                {level}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </Field>
+        <ChipRow
+          label="Company size"
+          {...arrayField('companySizeRanges')}
+          placeholder="e.g. 200-2000"
+        />
 
-      <Field label="Location" htmlFor="location" error={errors.location?.message}>
-        <Input id="location" {...register('location')} />
-      </Field>
+        <ChipRow
+          label="Exclude"
+          {...arrayField('excludeCompanies')}
+          placeholder="Company to exclude"
+        />
 
-      <div className="grid grid-cols-2 gap-3">
-        <Field
-          label="Min years experience"
-          htmlFor="minYearsExperience"
-          error={errors.minYearsExperience?.message}
-        >
-          <Input
-            id="minYearsExperience"
-            type="number"
-            min={0}
-            {...register('minYearsExperience', { valueAsNumber: true })}
-          />
-        </Field>
-        <Field
-          label="Max years experience"
-          htmlFor="maxYearsExperience"
-          error={errors.maxYearsExperience?.message}
-        >
-          <Input
-            id="maxYearsExperience"
-            type="number"
-            min={0}
-            {...register('maxYearsExperience', { valueAsNumber: true })}
-          />
-        </Field>
+        <div className="flex items-center gap-4 py-2">
+          <span className="w-32 shrink-0 text-[13px] text-[var(--color-ink-muted)]">
+            Experience
+          </span>
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              min={0}
+              value={values.minYearsExperience}
+              onChange={(event) =>
+                setValue('minYearsExperience', Number(event.target.value), {
+                  shouldValidate: true,
+                })
+              }
+              className="w-20"
+              aria-label="Minimum years of experience"
+            />
+            <span className="text-[13px] text-[var(--color-ink-muted)]">to</span>
+            <Input
+              type="number"
+              min={0}
+              value={values.maxYearsExperience}
+              onChange={(event) =>
+                setValue('maxYearsExperience', Number(event.target.value), {
+                  shouldValidate: true,
+                })
+              }
+              className="w-20"
+              aria-label="Maximum years of experience"
+            />
+            <span className="text-[13px] text-[var(--color-ink-muted)]">years</span>
+          </div>
+          {errors.maxYearsExperience ? (
+            <p className="text-[12px] text-[var(--color-sig-bad)]">
+              {errors.maxYearsExperience.message}
+            </p>
+          ) : null}
+        </div>
       </div>
 
-      {/* Registered so the array validates, never rendered as its own input. */}
-      <input type="hidden" {...register('skills')} />
-
-      <div>
+      <div className="pt-4">
         <Button type="submit" variant="primary" disabled={isSubmitting}>
           {isSubmitting ? 'Estimating…' : 'Continue to provider plan'}
         </Button>
       </div>
     </form>
-  )
-}
-
-function Field({
-  label,
-  htmlFor,
-  error,
-  children,
-}: {
-  readonly label: string
-  readonly htmlFor: string
-  readonly error?: string | undefined
-  readonly children: ReactNode
-}) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <label htmlFor={htmlFor} className="text-[13px] font-medium text-[var(--color-ink)]">
-        {label}
-      </label>
-      {children}
-      {error ? <p className="text-[12px] text-[var(--color-sig-bad)]">{error}</p> : null}
-    </div>
   )
 }

@@ -15,7 +15,7 @@ export function RouteStub({
 }) {
   return (
     <section className="p-4">
-      <h1 className="text-[15px] font-semibold text-[var(--color-ink)]">{title}</h1>
+      <h2 className="text-[15px] font-semibold text-[var(--color-ink)]">{title}</h2>
       <p className="mt-1 text-[13px] text-[var(--color-ink-muted)]">Built in {phase}.</p>
       {children}
     </section>

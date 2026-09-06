@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
 
+import { TopBar } from '@/shared/components/layout/TopBar'
 import type { SearchId } from '@/shared/types/ids'
 
 import { FilterChips } from '../components/FilterChips'
@@ -9,53 +10,50 @@ import { ProviderPlanTable } from '../components/ProviderPlanTable'
 import { useCreateSearch } from '../hooks/use-new-search'
 import type { SearchSpec } from '../schemas/search-spec'
 
-type Stage =
-  | { readonly step: 'jd' }
-  | { readonly step: 'chips'; readonly spec: SearchSpec }
-  | { readonly step: 'plan'; readonly searchId: SearchId }
+type PlanStage = { readonly searchId: SearchId } | null
 
 /**
- * Three stages in one route, per the plan: JD text -> editable filter chips
- * -> provider plan with a budget guard. Nothing here updates optimistically —
- * every stage past the first one spends or is about to spend real credits.
+ * JD input and the parsed filter chips stay on screen together once parsed —
+ * a recruiter corrects a chip while the original text is still visible,
+ * rather than losing the JD the moment it's read. The provider plan (which
+ * spends real credits) only appears once the recruiter has confirmed the
+ * filters below it, never before.
  */
 export function NewSearchPage() {
   const navigate = useNavigate()
-  const [stage, setStage] = useState<Stage>({ step: 'jd' })
+  const [spec, setSpec] = useState<SearchSpec | null>(null)
+  const [plan, setPlan] = useState<PlanStage>(null)
   const createSearch = useCreateSearch()
 
-  const handleSpecSubmit = (spec: SearchSpec): void => {
-    createSearch.mutate(spec, {
-      onSuccess: (searchId) => setStage({ step: 'plan', searchId }),
+  const handleSpecSubmit = (submitted: SearchSpec): void => {
+    createSearch.mutate(submitted, {
+      onSuccess: (searchId) => setPlan({ searchId }),
     })
   }
 
   return (
-    <div className="mx-auto flex max-w-2xl flex-col gap-1 p-6">
-      <h1 className="text-[15px] font-semibold text-[var(--color-ink)]">New search</h1>
-      <p className="text-[13px] text-[var(--color-ink-muted)]">
-        Paste a job description, review the parsed filters, then confirm the provider spend.
-      </p>
+    <div className="grid min-h-0 grid-rows-[auto_1fr]">
+      <TopBar title="New search" breadcrumb="searches" creditsBalance={8420} />
 
-      <div className="mt-4">
-        {stage.step === 'jd' ? (
-          <JdInput onParsed={(spec) => setStage({ step: 'chips', spec })} />
-        ) : null}
+      <div className="overflow-auto">
+        <div className="mx-auto flex max-w-3xl flex-col gap-4 p-6">
+          <JdInput onParsed={setSpec} />
 
-        {stage.step === 'chips' ? (
-          <FilterChips
-            initialSpec={stage.spec}
-            onSubmit={handleSpecSubmit}
-            isSubmitting={createSearch.isPending}
-          />
-        ) : null}
+          {spec && !plan ? (
+            <FilterChips
+              initialSpec={spec}
+              onSubmit={handleSpecSubmit}
+              isSubmitting={createSearch.isPending}
+            />
+          ) : null}
 
-        {stage.step === 'plan' ? (
-          <ProviderPlanTable
-            searchId={stage.searchId}
-            onStarted={() => navigate(`/searches/${stage.searchId}`)}
-          />
-        ) : null}
+          {plan ? (
+            <ProviderPlanTable
+              searchId={plan.searchId}
+              onStarted={() => navigate(`/searches/${plan.searchId}`)}
+            />
+          ) : null}
+        </div>
       </div>
     </div>
   )

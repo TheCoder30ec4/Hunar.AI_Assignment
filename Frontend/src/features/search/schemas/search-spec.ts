@@ -8,12 +8,20 @@ import { providerSchema } from '@/shared/types/domain'
  * garbled seniority guess) must never block editing the others.
  */
 export const searchSpecSchema = z.object({
-  title: z.string().min(1, 'Title is required.'),
+  // Multiple acceptable titles (OR match) — a parsed JD title plus close
+  // synonyms the recruiter widens the pool with, editable as separate chips.
+  titles: z.array(z.string().min(1)).min(1, 'Add at least one title.'),
   skills: z.array(z.string().min(1)).min(1, 'Add at least one skill.'),
+  niceToHaveSkills: z.array(z.string().min(1)),
   seniority: z.enum(['intern', 'junior', 'mid', 'senior', 'staff', 'principal', 'lead']),
   location: z.string().min(1, 'Location is required.'),
+  locationRadiusKm: z.number().int().min(0).max(500).nullable(),
   minYearsExperience: z.number().int().min(0).max(40),
   maxYearsExperience: z.number().int().min(0).max(40),
+  // "min,max" chips, e.g. "200,2000" — kept as a display string since the
+  // recruiter edits/adds ranges as whole chips, not two separate numbers.
+  companySizeRanges: z.array(z.string().min(1)),
+  excludeCompanies: z.array(z.string().min(1)),
 })
 export type SearchSpec = z.infer<typeof searchSpecSchema>
 
@@ -81,17 +89,25 @@ const LEVEL_TO_SENIORITY: Readonly<Record<string, SearchSpec['seniority']>> = {
  */
 export function jdExtractionToSearchSpec(extraction: JdExtraction): SearchSpec {
   const location = [...extraction.location.cities, ...extraction.location.countries].join(', ')
-  const skills = [...extraction.skills.must_have, ...extraction.skills.nice_to_have].map(
-    (skill) => skill.name,
-  )
+  const mustHave = extraction.skills.must_have.map((skill) => skill.name)
+  const niceToHave = extraction.skills.nice_to_have.map((skill) => skill.name)
 
   return {
-    title: extraction.role.title ?? '',
-    skills: skills.length > 0 ? skills : ['General'],
+    titles: extraction.role.title ? [extraction.role.title] : ['Untitled role'],
+    skills: mustHave.length > 0 ? mustHave : ['General'],
+    niceToHaveSkills: niceToHave,
     seniority: extraction.role.level ? (LEVEL_TO_SENIORITY[extraction.role.level] ?? 'mid') : 'mid',
     location: location.length > 0 ? location : 'Unspecified',
+    // The extraction doesn't produce a radius — recruiters set this by hand
+    // once they see the parsed location.
+    locationRadiusKm: null,
     minYearsExperience: extraction.experience.min_years ?? 0,
     maxYearsExperience: extraction.experience.max_years ?? extraction.experience.min_years ?? 10,
+    // Company-size scoping and exclusions are search-time decisions the
+    // recruiter layers on top, not facts the JD states — the extraction
+    // has nothing to seed these with.
+    companySizeRanges: [],
+    excludeCompanies: [],
   }
 }
 
