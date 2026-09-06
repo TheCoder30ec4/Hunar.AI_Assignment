@@ -26,8 +26,10 @@ npm run dev      # http://localhost:5173 — MSW mocks every endpoint
 | `npm run test:watch` | Vitest watch mode |
 | `npm run lint` | oxlint |
 
-There is no backend. Every endpoint is served by MSW handlers in `src/mocks/`, including a
-10,000-row fixture used for the virtualisation perf gate.
+Auth talks to the real backend (`VITE_API_BASE_URL`, default `http://localhost:8000`) — start
+it first (`cd Backend && uv run uvicorn main:app --reload`). Every other endpoint is still
+served by MSW handlers in `src/mocks/`, including a 10,000-row fixture used for the
+virtualisation perf gate; MSW bypasses `/auth/*` to the real network.
 
 ## Layout
 
@@ -84,6 +86,21 @@ back into utility space. Components consume tokens, never raw hex.
 - The compliance gate has **no override control** in the UI — not behind a confirm dialog.
 - Never display raw transcript text in the answer table; normalised values only, raw on hover.
 - Never optimistically update anything that spends credits or places a call.
+
+## Authentication ✅
+
+Not part of the original 10-phase plan — added once the backend's `/auth/login` existed.
+
+- [x] `POST /auth/login` wired to the real backend (JWT, not MSW-mocked)
+- [x] `features/auth`: Zod schemas, react-hook-form login form, `useLogin` mutation
+- [x] Token persisted to `localStorage` via `shared/api/auth-token.ts`; `apiFetch` reads it
+      and clears it on a 401
+- [x] `useAuthStore` (Zustand) — session flag only, seeded from localStorage on load
+- [x] `RequireAuth` route guard wraps the shell + compliance-review sibling; `/login` is
+      the only public app route besides 404
+- [x] Verified live against the real backend in headless Chromium: both accounts log in,
+      wrong password shows the server's error, reload survives, clearing the token bounces
+      back to `/login`
 
 ## Build phases
 

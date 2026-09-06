@@ -1,5 +1,6 @@
 import type { z } from 'zod'
 
+import { getAuthToken, clearAuthToken } from './auth-token'
 import { ApiErrorException, apiErrorFromStatus, apiErrorFromThrown } from './errors'
 
 const BASE_URL = import.meta.env['VITE_API_BASE_URL'] ?? '/api'
@@ -16,7 +17,9 @@ export interface ApiFetchOptions<T> {
 }
 
 function authHeaders(): Record<string, string> {
-  const token = import.meta.env['VITE_API_TOKEN']
+  // The logged-in user's token takes priority; VITE_API_TOKEN remains as a
+  // dev-only override for hitting the API without going through /auth/login.
+  const token = getAuthToken() ?? import.meta.env['VITE_API_TOKEN']
   return typeof token === 'string' && token.length > 0
     ? { Authorization: `Bearer ${token}` }
     : {}
@@ -77,6 +80,10 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions<T>): Pr
 
   if (!response.ok) {
     const { message, fieldErrors } = await describeFailure(response)
+    // A 401 means the stored token is missing/expired/invalid — drop it so the
+    // next render's auth check sends the user back to /login instead of
+    // silently retrying the same dead token forever.
+    if (response.status === 401) clearAuthToken()
     throw apiErrorFromStatus(response.status, message, fieldErrors)
   }
 
