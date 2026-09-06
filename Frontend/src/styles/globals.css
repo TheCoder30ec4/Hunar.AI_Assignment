@@ -1,0 +1,149 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+
+@custom-variant dark (&:is(.dark *));
+
+/* ─────────────────────────────────────────────────────────────
+   Layer 1 — design tokens.
+   @theme emits both a CSS var and a Tailwind utility, so
+   --color-sig-live gives us bg-sig-live / text-sig-live / border-sig-live.
+   ───────────────────────────────────────────────────────────── */
+@theme {
+  --color-bg: #e9edf1;
+  --color-surface: #ffffff;
+  --color-surface-sunk: #dfe5eb;
+  --color-ink: #0f1923;
+  --color-ink-muted: #5a6773;
+  --color-line: #c8d1da;
+
+  /* Signal colours: call state and data quality ONLY.
+     Never chrome, never a background wash, never a gradient. */
+  --color-sig-live: #c77a00; /* dialing / in progress */
+  --color-sig-good: #146b4f; /* connected, qualified  */
+  --color-sig-bad: #a93226; /* failed, blocked       */
+  --color-sig-cold: #8894a0; /* queued                */
+  --color-accent: #1b3fa0; /* primary action, focus */
+
+  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  --radius-control: 4px;
+  --radius-cell: 0px;
+
+  --shadow-float: 0 8px 24px rgb(15 25 35 / 0.16);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Layer 2 — shadcn's variable contract, aliased onto our tokens.
+   Deliberately a plain :root, NOT @theme. Putting these in @theme
+   would emit a second set of utilities (bg-background AND bg-bg)
+   for the same colour, which invites drift between the two names.
+   ───────────────────────────────────────────────────────────── */
+:root {
+  --background: var(--color-bg);
+  --foreground: var(--color-ink);
+  --card: var(--color-surface);
+  --card-foreground: var(--color-ink);
+  --popover: var(--color-surface);
+  --popover-foreground: var(--color-ink);
+  --primary: var(--color-accent);
+  --primary-foreground: var(--color-surface);
+  --secondary: var(--color-surface-sunk);
+  --secondary-foreground: var(--color-ink);
+  --muted: var(--color-surface-sunk);
+  --muted-foreground: var(--color-ink-muted);
+  --accent: var(--color-surface-sunk);
+  --accent-foreground: var(--color-ink);
+  --destructive: var(--color-sig-bad);
+  --destructive-foreground: var(--color-surface);
+  --border: var(--color-line);
+  --input: var(--color-line);
+  --ring: var(--color-accent);
+  --radius: var(--radius-control);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Layer 3 — bridge the aliases back into utility space so shadcn's
+   className="bg-background border-border" resolves.
+   `inline` is the key v4 detail: the emitted utility references the
+   var BY NAME rather than freezing its value at build time, which is
+   what lets a scoped override (e.g. .dark) actually take effect.
+   ───────────────────────────────────────────────────────────── */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent-subtle: var(--accent);
+  --color-accent-subtle-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-line);
+  }
+
+  html {
+    font-family: var(--font-sans);
+  }
+
+  body {
+    background-color: var(--color-bg);
+    color: var(--color-ink);
+    /* Dense ops tool: 13px base, not 16px. */
+    font-size: 13px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Focus ring is never removed — a11y floor. 2px, accent, always visible. */
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+  }
+
+  /* Reach for this on any numeric column so digits align in a table. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Machine data only: phone numbers, durations, timestamps, IDs, credits, costs. */
+  .machine {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}

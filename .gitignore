@@ -1,0 +1,34 @@
+# Secrets — never commit. Backend/.env holds a live Hunar API key.
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+.venv/
+__pycache__/
+*.py[oc]
+
+# Build output
+dist/
+build/
+wheels/
+*.egg-info
+.vite/
+
+# Test and coverage output
+coverage/
+playwright-report/
+test-results/
+.nyc_output/
+
+# Editor and OS
+.DS_Store
+*.swp
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Logs
+*.log
+npm-debug.log*

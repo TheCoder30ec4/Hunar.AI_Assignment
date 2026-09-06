@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p .claude)",
+      "Bash(cp /Users/chaduvulavarun/.claude/plans/try-again-spicy-mango.md .claude/PLAN.md)",
+      "Bash(tail -30 /Users/chaduvulavarun/.npm/_logs/2026-09-06T01_37_54_935Z-debug-0.log 2>&1)",
+      "Read(//Users/chaduvulavarun/.npm/_logs/**)"
+    ]
+  }
+}
