@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from controllers.auth_controller import router as auth_router
+from controllers.search_controller import router as search_router
 from Database.core import lifespan_db
 
 app = FastAPI(title="Hunar recruiter console API", lifespan=lifespan_db)
@@ -17,6 +18,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(search_router)
 
 
 @app.get("/health")
