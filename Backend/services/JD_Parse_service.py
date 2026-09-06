@@ -298,7 +298,14 @@ Output:
         model=init_chat_model(
             "groq:openai/gpt-oss-120b",
             temperature=0.0,
-            max_tokens=2000,
+            # 2000 was too low for this schema: gpt-oss-120b spends a large
+            # share of its budget on internal reasoning tokens before writing
+            # any JSON (observed ~1400 reasoning tokens on a short JD), and
+            # the extraction has 14 top-level keys with several nested arrays
+            # of multi-field objects — a detailed JD easily needs more output
+            # tokens than that leaves. Hitting the cap mid-string produces
+            # invalid JSON (finish_reason "length"), not a clean error.
+            max_tokens=8000,
         ),
     )
     result = agent.invoke({"messages": [{"role": "user", "content": jd_text}]})
