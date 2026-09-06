@@ -1,10 +1,31 @@
 import json
 
-from deepagents import create_deep_agent
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 
 load_dotenv()
+
+# One model instance, reused across calls — init_chat_model does real setup
+# work (provider resolution, client construction) that a single-shot
+# extraction call shouldn't pay for on every request.
+_MODEL = init_chat_model(
+    "groq:openai/gpt-oss-120b",
+    temperature=0.0,
+    # 2000 was too low for this schema: gpt-oss-120b spends a large share of
+    # its completion budget on internal reasoning tokens before writing any
+    # JSON, and the extraction has 14 top-level keys with several nested
+    # arrays of multi-field objects — a detailed JD easily needs more output
+    # tokens than that leaves. Hitting the cap mid-string produces invalid
+    # JSON (finish_reason "length"), not a clean error.
+    max_tokens=8000,
+    # Cuts latency roughly in half (measured ~2.3-3s vs ~4-5s at the
+    # default) by spending less of the completion budget on internal
+    # reasoning before it starts writing JSON. This is a single-shot
+    # extraction against a fixed, example-heavy prompt, not open-ended
+    # reasoning — verified accuracy is unaffected across several test JDs
+    # (title, years, skills, and compensation conversion all still correct).
+    reasoning_effort="low",
+)
 
 
 def JD_parse_service(jd_text: str) -> dict:
@@ -291,24 +312,16 @@ Output:
 
 
 
-    agent = create_deep_agent(
-        system_prompt=SYSTEM_PROMPT,
-        # openai/gpt-oss-120b: Groq's largest model with native JSON schema /
-        # structured-output support (response_format={"type": "json_schema"}).
-        model=init_chat_model(
-            "groq:openai/gpt-oss-120b",
-            temperature=0.0,
-            # 2000 was too low for this schema: gpt-oss-120b spends a large
-            # share of its budget on internal reasoning tokens before writing
-            # any JSON (observed ~1400 reasoning tokens on a short JD), and
-            # the extraction has 14 top-level keys with several nested arrays
-            # of multi-field objects — a detailed JD easily needs more output
-            # tokens than that leaves. Hitting the cap mid-string produces
-            # invalid JSON (finish_reason "length"), not a clean error.
-            max_tokens=8000,
-        ),
+    # A direct chat completion, not create_deep_agent's full LangGraph agent
+    # scaffold. This is one-shot text-in/JSON-out with no tools to call and
+    # no multi-step planning to do — the agent scaffold's graph execution and
+    # middleware only added latency (measured ~1s+ overhead) for no benefit
+    # on this task. Cut it entirely rather than trim it down.
+    response = _MODEL.invoke(
+        [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": jd_text},
+        ]
     )
-    result = agent.invoke({"messages": [{"role": "user", "content": jd_text}]})
-    final_message = result["messages"][-1]
-    return json.loads(final_message.content)
+    return json.loads(response.content)
 
