@@ -1,0 +1,71 @@
+# Render blueprint: one web service + one Postgres database.
+#
+#   Render Dashboard -> New -> Blueprint -> pick this repo
+#
+# Secrets (sync: false below) are NOT in this file. Render prompts for them
+# on first deploy, or you set them under the service's Environment tab.
+
+services:
+  - type: web
+    name: hunar-api
+    runtime: docker
+    dockerfilePath: ./Backend/Dockerfile
+    dockerContext: ./Backend
+    region: singapore # closest Render region to India
+    plan: starter # 512MB. Free tier sleeps after inactivity, which would
+      # kill an in-flight calling run mid-campaign.
+
+    healthCheckPath: /health
+
+    # ONE instance, deliberately. Calling runs are tracked in an in-process
+    # dict (Backend/services/calling_jobs.py), so a second instance would
+    # not see a campaign started by the first and its results would never
+    # be recorded. Moving that state into Postgres is what unlocks scaling.
+    numInstances: 1
+
+    # Migrations run before the new version receives traffic, so the app can
+    # never serve against an un-upgraded schema. The migration also creates
+    # the pgvector/citext/pg_trgm extensions the schema depends on.
+    preDeployCommand: alembic upgrade head
+
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: hunar-db
+          property: connectionString
+
+      # Comma-separated origins allowed to call this API. Set this to the
+      # deployed frontend's URL (e.g. https://your-app.vercel.app) or every
+      # browser request fails with an opaque CORS error.
+      - key: CORS_ORIGINS
+        sync: false
+
+      # Auth. Generate fresh values — never reuse the dev ones:
+      #   python3 -c "import secrets; print(secrets.token_hex(32))"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+
+      # Provider credentials — entered in the Render dashboard, never here.
+      - key: GROQ_API_KEY
+        sync: false
+      - key: APIFY_API_KEY
+        sync: false
+      - key: APIFY_USER_ID
+        sync: false
+      - key: HUNAR_AI_API_KEY
+        sync: false
+      - key: HUNAR_AGENT_ID
+        sync: false
+      - key: Enrich_API_KEY
+        sync: false
+      - key: apollo_io_key
+        sync: false
+
+databases:
+  - name: hunar-db
+    databaseName: hunar
+    user: hunar
+    region: singapore
+    plan: basic-256mb

@@ -11,6 +11,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import MetaData, text
 from sqlalchemy.ext.asyncio import (
@@ -30,6 +31,24 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str
+
+    @field_validator("database_url")
+    @classmethod
+    def _require_async_driver(cls, value: str) -> str:
+        """Normalises a plain `postgresql://` URL to `postgresql+asyncpg://`.
+
+        Managed hosts (Render, Heroku, Fly) hand out a driver-less URL, and
+        some still use the legacy `postgres://` scheme. Both are passed
+        straight to create_async_engine, which needs an async driver and
+        fails at startup with an opaque error otherwise. Rewriting here
+        means one place understands the difference, rather than every
+        deployment target needing a hand-edited env var.
+        """
+        if value.startswith("postgres://"):
+            value = value.replace("postgres://", "postgresql://", 1)
+        if value.startswith("postgresql://"):
+            value = value.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return value
     db_pool_size: int = 10
     db_max_overflow: int = 5
     # Fail fast on a wedged connection rather than hanging a request forever.
