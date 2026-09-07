@@ -98,8 +98,22 @@ export async function createSearch(spec: SearchSpec, signal?: AbortSignal): Prom
   return asSearchId(response.searchId)
 }
 
-export function getProviderPlan(searchId: SearchId, signal?: AbortSignal): Promise<ProviderPlan> {
-  return apiFetch(`/searches/${searchId}/plan`, { schema: providerPlanSchema, signal })
+/**
+ * Calls the real backend (Backend/services/provider_plan_service.py) — not
+ * mocked. Cost math runs against confirmed-live provider pricing, and
+ * Enrich.so's credit balance is read from that service's own last-known
+ * value, so this must hit the real server, not a canned MSW response.
+ */
+export function getProviderPlan(
+  resultsNeeded: number,
+  signal?: AbortSignal,
+): Promise<ProviderPlan> {
+  return apiFetch('/searches/provider-plan', {
+    method: 'POST',
+    body: { results_needed: resultsNeeded },
+    schema: providerPlanSchema,
+    signal,
+  })
 }
 
 /**

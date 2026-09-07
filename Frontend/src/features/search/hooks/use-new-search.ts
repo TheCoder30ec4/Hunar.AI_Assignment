@@ -87,14 +87,22 @@ export function useCreateSearch() {
   })
 }
 
-export function useProviderPlan(searchId: SearchId | null) {
+/** resultsNeeded is the recruiter's own input (how many candidates they
+ * want), not a system estimate — the plan recomputes live as they change it.
+ * null means "not entered yet"; the query stays disabled until then so it
+ * never fires with a meaningless count.
+ */
+export function useProviderPlan(resultsNeeded: number | null) {
   return useQuery({
-    queryKey: searchId ? qk.search.providerPlan(searchId) : ['search', 'provider-plan', 'idle'],
+    queryKey:
+      resultsNeeded !== null
+        ? qk.search.providerPlan(resultsNeeded)
+        : ['search', 'provider-plan', 'idle'],
     queryFn: ({ signal }) => {
-      if (!searchId) throw new Error('useProviderPlan called before a search exists')
-      return getProviderPlan(searchId, signal)
+      if (resultsNeeded === null) throw new Error('useProviderPlan called before a count was entered')
+      return getProviderPlan(resultsNeeded, signal)
     },
-    enabled: searchId !== null,
+    enabled: resultsNeeded !== null && resultsNeeded > 0,
   })
 }
 

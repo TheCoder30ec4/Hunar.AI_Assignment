@@ -1,13 +1,23 @@
 import { z } from 'zod'
 
-/** The four people-search providers sitting behind the backend. */
-export const providerSchema = z.enum(['pdl', 'apollo', 'proxycurl', 'coresignal'])
+/**
+ * Providers behind the backend. Only `apify` (LinkedIn people search) and
+ * `enrich` (email validation) are real, working integrations — see
+ * Backend/services/apify_service.py and enrich_service.py. `pdl` and
+ * `coresignal` have no API key or integration at all; they stay in the enum
+ * purely so the provider plan can show them as visibly disabled placeholders
+ * for future providers, per explicit product decision — never treat them as
+ * reachable. Apollo and Proxycurl were removed entirely: Apollo's plan
+ * blocks every data endpoint (confirmed live, 403 API_INACCESSIBLE on
+ * People Search/Enrichment/Org Search), and Proxycurl was never wired up.
+ */
+export const providerSchema = z.enum(['apify', 'enrich', 'pdl', 'coresignal'])
 export type Provider = z.infer<typeof providerSchema>
 
 export const PROVIDER_LABEL: Readonly<Record<Provider, string>> = {
+  apify: 'Apify (LinkedIn)',
+  enrich: 'Enrich.so (email validation)',
   pdl: 'People Data Labs',
-  apollo: 'Apollo',
-  proxycurl: 'Proxycurl',
   coresignal: 'Coresignal',
 }
 

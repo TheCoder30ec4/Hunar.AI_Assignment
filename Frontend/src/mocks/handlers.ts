@@ -102,6 +102,14 @@ export const handlers = [
     proxyStreamToRealBackend(request, '/searches/parse-jd/stream'),
   ),
 
+  /** Real cost math against confirmed-live provider pricing — see
+   *  Backend/services/provider_plan_service.py. Not mocked, same reason as
+   *  parse-jd: a canned response can't reflect Enrich.so's actual remaining
+   *  credit balance. */
+  http.post('/api/searches/provider-plan', ({ request }) =>
+    proxyToRealBackend(request, '/searches/provider-plan'),
+  ),
+
   http.get('/api/campaigns', () => HttpResponse.json(CAMPAIGNS)),
 
   /** Stage 2 -> 3: create a search row from the edited spec. */
@@ -111,26 +119,6 @@ export const handlers = [
     nextSearchSeq += 1
     SEARCHES.set(searchId, spec)
     return HttpResponse.json({ searchId })
-  }),
-
-  /** Stage 3: per-provider cost estimate, deliberately over budget by default
-   *  so the budget guard is exercised without extra test setup. */
-  http.get('/api/searches/:searchId/plan', ({ params }) => {
-    if (!SEARCHES.has(String(params['searchId']))) {
-      return HttpResponse.json({ message: 'Search not found.' }, { status: 404 })
-    }
-    return HttpResponse.json({
-      rows: [
-        { provider: 'apollo', estimatedResults: 210, estimatedCredits: 420, enabled: true },
-        { provider: 'pdl', estimatedResults: 340, estimatedCredits: 340, enabled: false },
-        { provider: 'proxycurl', estimatedResults: 180, estimatedCredits: 180, enabled: false },
-        { provider: 'coresignal', estimatedResults: 95, estimatedCredits: 190, enabled: false },
-      ],
-      // Only Apollo actually runs, so only its credits count against budget.
-      totalCredits: 420,
-      budgetCredits: 1000,
-      currency: 'INR',
-    })
   }),
 
   http.post('/api/searches/:searchId/run', ({ params }) => {
@@ -159,7 +147,7 @@ export const handlers = [
     const outcome =
       url.searchParams.get('partial') === '1'
         ? generateProviderOutcome()
-        : { succeeded: ['pdl', 'apollo', 'proxycurl', 'coresignal'] as const, failed: [] }
+        : { succeeded: ['apify', 'pdl', 'coresignal'] as const, failed: [] }
 
     const page: CandidatePage = {
       rows,

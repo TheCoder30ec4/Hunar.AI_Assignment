@@ -125,24 +125,46 @@ export function jdExtractionToSearchSpec(extraction: JdExtraction): SearchSpec {
   }
 }
 
+/**
+ * Mirrors Backend/dtos/provider_plan_dto.py exactly. Apify bills in USD,
+ * Enrich.so bills in its own credits — both surfaced natively rather than
+ * force-converted into one fake unit, since there's no confirmed $/credit
+ * rate to convert with (Enrich.so doesn't publish one).
+ */
+/** Field names match Backend/dtos/provider_plan_dto.py's JSON output
+ * verbatim (snake_case, confirmed via a live curl call) — apiFetch does no
+ * case conversion, so the schema has to mirror the wire format exactly. */
 export const providerPlanRowSchema = z.object({
   provider: providerSchema,
-  estimatedResults: z.number().int().nonnegative(),
-  estimatedCredits: z.number().int().nonnegative(),
-  // Only Apollo is wired up on the backend right now — the other three
-  // providers still appear in the plan (so the recruiter can see what's
-  // coming) but can't be run yet.
   enabled: z.boolean(),
+  results: z.number().int().nonnegative(),
+  cost_usd: z.number().nullable(),
+  cost_credits: z.number().int().nullable(),
+  note: z.string().nullable(),
 })
 export type ProviderPlanRow = z.infer<typeof providerPlanRowSchema>
 
 export const providerPlanSchema = z.object({
   rows: z.array(providerPlanRowSchema),
-  totalCredits: z.number().int().nonnegative(),
-  budgetCredits: z.number().int().nonnegative(),
-  currency: z.string().length(3),
+  total_cost_usd: z.number(),
+  enrich_credits_remaining: z.number().int(),
+  enrich_credit_cap: z.number().int(),
+  exceeds_credit_cap: z.boolean(),
 })
 export type ProviderPlan = z.infer<typeof providerPlanSchema>
+
+/** Data-source options for the Apify row. Only LinkedIn is a real,
+ * integrated actor — Crunchbase and Twitter/X are genuine Apify actors that
+ * exist and could be wired up, but aren't yet, so they show as disabled
+ * options rather than being omitted (the UI should say what's coming, not
+ * pretend the choice doesn't exist).
+ */
+export const DATA_SOURCE_OPTIONS = [
+  { value: 'linkedin', label: 'LinkedIn', enabled: true },
+  { value: 'crunchbase', label: 'Crunchbase', enabled: false },
+  { value: 'twitter', label: 'Twitter / X', enabled: false },
+] as const
+export type DataSource = (typeof DATA_SOURCE_OPTIONS)[number]['value']
 
 export const createSearchResponseSchema = z.object({
   searchId: z.string(),

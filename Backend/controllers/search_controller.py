@@ -7,7 +7,9 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
 
+from dtos.provider_plan_dto import ProviderPlanRequestDTO, ProviderPlanResponseDTO
 from dtos.search_dto import ParseJdRequestDTO, ParseJdResponseDTO
+from services.provider_plan_service import build_provider_plan
 from services.search_service import (
     JdParseFailedError,
     JdParseMalformedError,
@@ -53,3 +55,14 @@ async def parse_jd_stream(request: ParseJdRequestDTO) -> StreamingResponse:
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/provider-plan", response_model=ProviderPlanResponseDTO)
+def provider_plan(request: ProviderPlanRequestDTO) -> ProviderPlanResponseDTO:
+    """Real cost math for the results count the recruiter states they need —
+    see services/provider_plan_service.py. No network call here (Apify's
+    price is a pure function of results_needed; Enrich.so's remaining
+    balance is read from the last real call this process made), so this
+    stays synchronous rather than async for nothing.
+    """
+    return build_provider_plan(request)
