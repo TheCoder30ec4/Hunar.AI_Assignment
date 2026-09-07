@@ -21,24 +21,21 @@ import {
 } from '@/shared/components/ui/table'
 import { cn } from '@/shared/lib/cn'
 import { PROVIDER_LABEL } from '@/shared/types/domain'
-import type { SearchId } from '@/shared/types/ids'
 
-import { useProviderPlan, useRunSearch } from '../hooks/use-new-search'
+import { useProviderPlan } from '../hooks/use-new-search'
 import { DATA_SOURCE_OPTIONS, type DataSource, type ProviderPlanRow } from '../schemas/search-spec'
 
 const DEFAULT_RESULTS_NEEDED = 25
 
 export function ProviderPlanTable({
-  searchId,
-  onStarted,
+  onRun,
 }: {
-  readonly searchId: SearchId
-  readonly onStarted: () => void
+  /** The parent owns the run itself (it swaps this panel for the progress view). */
+  readonly onRun: (resultsNeeded: number) => void
 }) {
   const [resultsNeeded, setResultsNeeded] = useState(DEFAULT_RESULTS_NEEDED)
   const [dataSource, setDataSource] = useState<DataSource>('linkedin')
   const plan = useProviderPlan(resultsNeeded)
-  const runSearch = useRunSearch()
 
   return (
     <div className="flex flex-col gap-3 border-t border-[var(--color-line)] pt-4">
@@ -96,8 +93,7 @@ export function ProviderPlanTable({
         <PlanDetails
           plan={plan.data}
           resultsNeeded={resultsNeeded}
-          runSearch={runSearch}
-          onRun={() => runSearch.mutate(searchId, { onSuccess: onStarted })}
+          onRun={() => onRun(resultsNeeded)}
         />
       ) : null}
     </div>
@@ -107,7 +103,6 @@ export function ProviderPlanTable({
 function PlanDetails({
   plan,
   resultsNeeded,
-  runSearch,
   onRun,
 }: {
   readonly plan: {
@@ -118,7 +113,6 @@ function PlanDetails({
     readonly exceeds_credit_cap: boolean
   }
   readonly resultsNeeded: number
-  readonly runSearch: { readonly isPending: boolean; readonly isError: boolean }
   readonly onRun: () => void
 }) {
   const enrichRow = plan.rows.find((row) => row.provider === 'enrich')
@@ -149,7 +143,7 @@ function PlanDetails({
                   <p className="mt-0.5 text-[11px] text-[var(--color-ink-muted)]">{row.note}</p>
                 ) : null}
               </TableCell>
-              <TableCell className="machine text-right">{row.enabled ? resultsNeeded : '—'}</TableCell>
+              <TableCell className="machine text-right">{row.enabled ? row.results : '—'}</TableCell>
               <TableCell className="machine text-right">
                 {row.cost_usd !== null
                   ? `$${row.cost_usd.toFixed(4)}`
@@ -190,20 +184,14 @@ function PlanDetails({
         </p>
       ) : null}
 
-      {runSearch.isError ? (
-        <p role="alert" className="text-[13px] text-[var(--color-sig-bad)]">
-          Could not start the search. Try again.
-        </p>
-      ) : null}
-
       <div>
         <Button
           type="button"
           variant="primary"
-          disabled={plan.exceeds_credit_cap || runSearch.isPending}
+          disabled={plan.exceeds_credit_cap}
           onClick={onRun}
         >
-          {runSearch.isPending ? 'Starting…' : 'Run search'}
+          Run search
         </Button>
       </div>
     </>

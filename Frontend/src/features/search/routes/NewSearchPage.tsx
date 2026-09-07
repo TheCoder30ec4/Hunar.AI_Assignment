@@ -8,7 +8,8 @@ import type { SearchId } from '@/shared/types/ids'
 import { FilterChips } from '../components/FilterChips'
 import { JdInput } from '../components/JdInput'
 import { ProviderPlanTable } from '../components/ProviderPlanTable'
-import { useCreateSearch } from '../hooks/use-new-search'
+import { RunProgress } from '../components/RunProgress'
+import { useCreateSearch, useRunSearchStream } from '../hooks/use-new-search'
 import type { SearchSpec } from '../schemas/search-spec'
 
 type PlanStage = { readonly searchId: SearchId } | null
@@ -30,13 +31,16 @@ type PlanStage = { readonly searchId: SearchId } | null
 export function NewSearchPage() {
   const navigate = useNavigate()
   const [spec, setSpec] = useState<SearchSpec | null>(null)
+  const [jdText, setJdText] = useState('')
   const [plan, setPlan] = useState<PlanStage>(null)
   const createSearch = useCreateSearch()
+  const run = useRunSearchStream()
 
   const handleSpecSubmit = (submitted: SearchSpec): void => {
-    createSearch.mutate(submitted, {
-      onSuccess: (searchId) => setPlan({ searchId }),
-    })
+    createSearch.mutate(
+      { spec: submitted, jdText },
+      { onSuccess: (searchId) => setPlan({ searchId }) },
+    )
   }
 
   const showingPlan = plan !== null
@@ -53,7 +57,12 @@ export function NewSearchPage() {
           )}
         >
           <div className={cn('mx-auto flex flex-col gap-4 p-6', showingPlan ? 'max-w-none' : 'max-w-3xl')}>
-            <JdInput onParsed={setSpec} />
+            <JdInput
+              onParsed={(parsedSpec, parsedJdText) => {
+                setSpec(parsedSpec)
+                setJdText(parsedJdText)
+              }}
+            />
 
             {spec ? (
               <FilterChips
@@ -74,12 +83,16 @@ export function NewSearchPage() {
           inert={!showingPlan ? true : undefined}
         >
           <div className="max-w-none p-6">
-            {plan ? (
+            {plan && run.status === 'idle' ? (
               <ProviderPlanTable
-                searchId={plan.searchId}
-                onStarted={() => navigate(`/searches/${plan.searchId}`)}
+                onRun={(resultsNeeded) =>
+                  run.start(plan.searchId, resultsNeeded, (outcome) =>
+                    navigate(`/searches/${outcome.searchId}`),
+                  )
+                }
               />
             ) : null}
+            {plan && run.status !== 'idle' ? <RunProgress state={run} onRetry={run.reset} /> : null}
           </div>
         </div>
       </div>
