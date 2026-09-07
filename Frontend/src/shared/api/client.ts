@@ -3,7 +3,8 @@ import type { z } from 'zod'
 import { clearAuthTokens, getAuthToken, getRefreshToken, setAccessToken } from './auth-token'
 import { ApiErrorException, apiErrorFromStatus, apiErrorFromThrown } from './errors'
 
-const BASE_URL = import.meta.env['VITE_API_BASE_URL'] ?? '/api'
+// ponytail: strip trailing slash so a stray VITE_API_BASE_URL="https://x/" doesn't produce //auth/login
+export const BASE_URL = (import.meta.env['VITE_API_BASE_URL'] ?? '/api').replace(/\/+$/, '')
 const TIMEOUT_MS = 30_000
 
 export interface ApiFetchOptions<T> {
@@ -18,7 +19,7 @@ export interface ApiFetchOptions<T> {
   readonly _isRetry?: boolean
 }
 
-function authHeaders(): Record<string, string> {
+export function authHeaders(): Record<string, string> {
   // The logged-in user's token takes priority; VITE_API_TOKEN remains as a
   // dev-only override for hitting the API without going through /auth/login.
   const token = getAuthToken() ?? import.meta.env['VITE_API_TOKEN']

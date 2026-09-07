@@ -1,3 +1,4 @@
+import { authHeaders, BASE_URL } from './client'
 import { apiErrorFromThrown } from './errors'
 
 /**
@@ -12,9 +13,9 @@ export async function* readSseStream(
   body: unknown,
   signal?: AbortSignal,
 ): AsyncGenerator<unknown, void, void> {
-  const response = await fetch(`/api${path}`, {
+  const response = await fetch(`${BASE_URL}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(body),
     ...(signal ? { signal } : {}),
   })
