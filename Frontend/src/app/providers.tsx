@@ -23,9 +23,11 @@ export function Providers() {
         </TooltipPrimitive.Provider>
         {import.meta.env.DEV ? <ReactQueryDevtools initialIsOpen={false} /> : null}
         {/* Click-to-annotate feedback toolbar; syncs to a coding agent via
-            agentation-mcp when that's configured. Dev-only, same gate as
-            the Query devtools above. */}
-        {import.meta.env.DEV ? <Agentation /> : null}
+            agentation-mcp when that's configured. Dev-only, and opt-in:
+            its overlay intercepts pointer events across the viewport, which
+            breaks ordinary clicking (and any e2e test) while it's mounted.
+            Enable with VITE_AGENTATION=1 when you actually want to annotate. */}
+        {import.meta.env.DEV && import.meta.env['VITE_AGENTATION'] === '1' ? <Agentation /> : null}
       </QueryClientProvider>
     </ErrorBoundary>
   )

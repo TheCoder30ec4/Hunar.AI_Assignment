@@ -101,6 +101,35 @@ const CAMPAIGN_STEPS: readonly TourStep[] = [
   },
 ]
 
+/**
+ * Drops steps whose target isn't on screen yet.
+ *
+ * Some panels exist in the DOM but are collapsed until earlier work is done
+ * — the provider plan is `w-0 opacity-0` until a job description is parsed.
+ * Highlighting one frames empty space at the screen edge, so those steps are
+ * skipped rather than shown pointing at nothing.
+ *
+ * Ancestry is what's tested, not the target's own box: a collapsed parent
+ * can contain a child that still measures its own padding (the provider
+ * plan's inner div reports 48x48 inside a `w-0` parent), so a size check on
+ * the target alone lets the step through. Panels that hide this way already
+ * mark themselves `inert`/`aria-hidden` for accessibility, which is the
+ * honest signal that there is nothing to look at.
+ */
+function visibleSteps(steps: readonly TourStep[]): readonly TourStep[] {
+  return steps.filter((step) => {
+    if (!step.selector) return true // Unanchored intro steps always show.
+    const element = document.querySelector(step.selector)
+    if (!element) return false
+    if (element.closest('[aria-hidden="true"], [inert]')) return false
+    // offsetParent is null for anything display:none (or a fixed-position
+    // element, which none of these targets are).
+    if (!(element instanceof HTMLElement) || element.offsetParent === null) return false
+    const { width, height } = element.getBoundingClientRect()
+    return width > 1 && height > 1
+  })
+}
+
 function stepsForPath(pathname: string): readonly TourStep[] {
   if (pathname.startsWith('/campaigns/')) return CAMPAIGN_STEPS
   if (pathname.startsWith('/searches/') && pathname !== '/searches/new') return RESULTS_STEPS
@@ -143,7 +172,7 @@ export function useProductTour() {
   }, [])
 
   const start = useCallback(() => {
-    const steps = stepsForPath(location.pathname)
+    const steps = visibleSteps(stepsForPath(location.pathname))
     // Nothing anchored on this route — send the user somewhere the tour has
     // something to show rather than opening an empty dialog.
     if (steps.length === 0) {
@@ -152,29 +181,69 @@ export function useProductTour() {
     }
 
     markSeen()
-    const client =
-      tourRef.current ??
-      new TourGuideClient({
-        exitOnClickOutside: false,
-        showStepDots: true,
-        rememberStep: false,
-        closeButton: true,
-        nextLabel: 'Next',
-        prevLabel: 'Back',
-        finishLabel: 'Done',
-      })
+
+    // A fresh client per run, with the steps passed to the CONSTRUCTOR.
+    //
+    // Two library behaviours force this. setOptions() only does
+    // Object.assign on options — it never calls computeTourSteps, so steps
+    // handed to it are stored but never become this.tourSteps, and the tour
+    // opens as a centred dialog highlighting nothing. addSteps() does
+    // compute them, but appends, so reusing one client across routes would
+    // stack every route's steps together.
+    void tourRef.current?.exit()
+
+    const client = new TourGuideClient({
+      steps: steps.map((step) => ({
+        ...(step.selector ? { target: step.selector } : {}),
+        title: step.title,
+        content: step.content,
+      })),
+      exitOnClickOutside: false,
+      showStepDots: true,
+      showStepProgress: true,
+      rememberStep: false,
+      closeButton: true,
+      keyboardControls: true,
+      nextLabel: 'Next',
+      prevLabel: 'Back',
+      finishLabel: 'Done',
+    })
     tourRef.current = client
 
-    void client
-      .setOptions({
-        steps: steps.map((step) => ({
-          ...(step.selector ? { target: step.selector } : {}),
-          title: step.title,
-          content: step.content,
-        })),
-      })
-      .then(() => client.start())
+    void client.start()
   }, [location.pathname, navigate])
+
+  /**
+   * Opens the tour once, on a user's first visit.
+   *
+   * Waits for the step's target to exist before starting: the campaign list
+   * renders only after its fetch resolves, and starting earlier would
+   * highlight nothing. Gives up after ~3s rather than waiting forever on a
+   * slow or failed request.
+   */
+  useEffect(() => {
+    if (hasSeenTour()) return
+    const steps = stepsForPath(location.pathname)
+    const anchor = steps.find((step) => step.selector)?.selector
+    if (steps.length === 0) return
+
+    let cancelled = false
+    let elapsed = 0
+    const tick = window.setInterval(() => {
+      elapsed += 150
+      const ready = !anchor || document.querySelector(anchor) !== null
+      if (cancelled) return
+      if (ready || elapsed >= 3000) {
+        window.clearInterval(tick)
+        if (!cancelled) start()
+      }
+    }, 150)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(tick)
+    }
+  }, [location.pathname, start])
 
   return { start, hasSeen: hasSeenTour() }
 }
