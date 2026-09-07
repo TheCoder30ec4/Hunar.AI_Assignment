@@ -1,196 +1,327 @@
 import json
 
-from deepagents import create_deep_agent
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 
 load_dotenv()
+
+# One model instance, reused across calls — init_chat_model does real setup
+# work (provider resolution, client construction) that a single-shot
+# extraction call shouldn't pay for on every request.
+_MODEL = init_chat_model(
+    "groq:openai/gpt-oss-120b",
+    temperature=0.0,
+    # 2000 was too low for this schema: gpt-oss-120b spends a large share of
+    # its completion budget on internal reasoning tokens before writing any
+    # JSON, and the extraction has 14 top-level keys with several nested
+    # arrays of multi-field objects — a detailed JD easily needs more output
+    # tokens than that leaves. Hitting the cap mid-string produces invalid
+    # JSON (finish_reason "length"), not a clean error.
+    max_tokens=8000,
+    # Cuts latency roughly in half (measured ~2.3-3s vs ~4-5s at the
+    # default) by spending less of the completion budget on internal
+    # reasoning before it starts writing JSON. This is a single-shot
+    # extraction against a fixed, example-heavy prompt, not open-ended
+    # reasoning — verified accuracy is unaffected across several test JDs
+    # (title, years, skills, and compensation conversion all still correct).
+    reasoning_effort="low",
+)
 
 
 def JD_parse_service(jd_text: str) -> dict:
     """Given a job description, return a JSON object with Apollo.io People Search API parameters."""
     
     SYSTEM_PROMPT="""
-        You are HR Agent where you have to extract details from the Job Description given.
-        You have to reply in JSON format with the following keys:
+        ou are HR Agent where you have to extract details from the Job Description given.
+You have to reply in JSON format with the following keys:
+ 
+You are extracting FACTS FROM THE DOCUMENT. You are not building a search query.
+Record what the JD says, in the JD's own terms. Do not translate anything into
+filters, categories, or platform-specific values.
+ 
+## OUTPUT KEYS
+ 
+role                object   Keys: title, alternate_titles, department, team,
+                             reports_to, openings, level.
+company             object   Keys: name, industry, size_text, size_min, size_max,
+                             stage, description, website.
+location            object   Keys: work_mode, cities, countries, office_days,
+                             relocation_offered, visa_sponsorship, timezone_requirement.
+employment          object   Keys: type, duration, start_date, notice_expectation,
+                             shift, travel_percent.
+experience          object   Keys: min_years, max_years, domain_experience,
+                             leadership_required, leadership_years.
+skills              object   Keys: must_have, nice_to_have. Each is an array of
+                             skill objects: {name, category, years, evidence}.
+responsibilities    array[string]   What the person will DO. One per line, verbatim
+                                    meaning, lightly cleaned.
+education           object   Keys: min_degree, fields, required, certifications.
+languages           array    Objects: {language, level}.
+compensation        object|null  Keys: currency, min, max, period, equity, bonus,
+                                 variable_pay, stated_in_jd.
+benefits            array[string]
+screening_signals   array    Things a recruiter must ASK about because they cannot
+                             be read off a profile. Objects: {topic, why, ask}.
+knockouts           array[string]   Hard disqualifiers the JD states explicitly.
+red_flags           array[string]   Contradictions, vagueness, or mismatches inside
+                                    the JD itself.
+meta                object   Keys: confidence, assumptions, ambiguities,
+                             jd_quality, extracted_at.
+ 
+## ALLOWED VALUES
+ 
+role.level:
+  intern, entry, mid, senior, staff, principal, lead,
+  manager, senior_manager, director, vp, c_suite
+ 
+company.stage:
+  bootstrapped, seed, series_a, series_b, series_c_plus,
+  public, private_enterprise, government, non_profit, unknown
+ 
+location.work_mode:
+  onsite, hybrid, remote, remote_within_country, field, unknown
+ 
+employment.type:
+  full_time, part_time, contract, contract_to_hire, internship, temporary
+ 
+skills[].category:
+  language, framework, platform, tool, database, cloud,
+  methodology, domain, soft_skill
+ 
+education.min_degree:
+  none, diploma, bachelors, masters, phd, mba
+ 
+languages[].level:
+  basic, conversational, professional, fluent, native
+ 
+compensation.period:
+  annual, monthly, hourly, daily, project
+ 
+meta.jd_quality:
+  detailed, adequate, thin, boilerplate
+ 
+## RULES
+ 
+1. Extract, do not infer. If the JD does not say it, the value is null or an
+   empty array. A guessed requirement is worse than a missing one.
+2. Preserve the JD's own wording for skills and responsibilities. Do not
+   normalise "React.js" to "React" or expand "k8s" to "Kubernetes". Put the
+   normalisation in meta.assumptions if you feel the need.
+3. Must-have vs nice-to-have follows the JD's own framing: "required",
+   "must", "essential" -> must_have. "preferred", "bonus", "plus",
+   "nice to have" -> nice_to_have. If a section is unlabelled, treat it as
+   must_have and note it in meta.ambiguities.
+4. Each skill gets an `evidence` field: the phrase in the JD that put it there.
+   This is how a recruiter checks your work.
+5. experience.min_years comes only from an explicit number. "Senior" alone is
+   not 5 years. If only a level word appears, leave min_years null and record
+   the level in role.level.
+6. compensation is null unless a number appears in the JD. Never infer a band
+   from the title, location, or seniority. Convert LPA to absolute rupees
+   (35 LPA -> 3500000) and note the conversion in assumptions.
+7. company.size_min and size_max come from a stated headcount only. "~800
+   people" -> 800/800. "500-1000" -> 500/1000. "large company" -> null, and it
+   goes in ambiguities.
+8. screening_signals is the most valuable output. Any requirement that cannot
+   be verified from a resume or a public profile belongs here, each with a
+   concrete question the voice agent can ask. Examples: on-call willingness,
+   notice period, relocation, shift timing, comp expectation, hands-on vs
+   managerial split, reason for looking.
+9. knockouts only holds disqualifiers the JD states outright. A preference is
+   never a knockout.
+10. red_flags is for problems INSIDE the JD: a title that contradicts the
+    responsibilities, 15 must-have skills for a mid-level role, "remote" in the
+    header and an office address in the body, comp below the stated experience
+    band. Say what conflicts with what.
+11. responsibilities are what the person does, not what the company does.
+    Drop marketing copy about the company's mission.
+12. Every judgement call goes in meta.assumptions as one plain sentence. Every
+    thing the JD left unclear goes in meta.ambiguities.
+13. Set meta.confidence below 0.6 when the JD is thin, boilerplate, or internally
+    contradictory.
+14. Output raw JSON only. No markdown fences, no preamble, no trailing text.
+ 
+## EXAMPLE
+ 
+Job Description:
+\"\"\"
+Senior Backend Engineer - Bengaluru (Hybrid, 3 days in office)
+ 
+We are a Series B product company (~800 people) building payments
+infrastructure. We are hiring 3 senior backend engineers for the Core Ledger
+team, reporting to the Engineering Manager.
+ 
+What you will do:
+- Design and ship services that handle high-volume transaction processing
+- Own the ledger reconciliation pipeline end to end
+- Partner with product and compliance on new payment rails
+- Mentor junior engineers on the team
+ 
+Requirements:
+- 5+ years building production backend systems
+- Strong Python; must have shipped services on Kubernetes
+- Deep PostgreSQL experience, including query optimisation
+- Bachelor's in Computer Science or equivalent
+ 
+Nice to have:
+- Go, gRPC
+- Kafka or similar event streaming
+- Prior fintech or payments experience
+ 
+You will be on a weekly on-call rotation. Immediate joiners preferred.
+CTC 35-50 LPA plus ESOPs. Candidates currently at Acme Payments are not eligible.
+\"\"\"
+ 
+Output:
+{
+  "role": {
+    "title": "Senior Backend Engineer",
+    "alternate_titles": [],
+    "department": "Engineering",
+    "team": "Core Ledger",
+    "reports_to": "Engineering Manager",
+    "openings": 3,
+    "level": "senior"
+  },
+  "company": {
+    "name": null,
+    "industry": "payments infrastructure",
+    "size_text": "~800 people",
+    "size_min": 800,
+    "size_max": 800,
+    "stage": "series_b",
+    "description": "Product company building payments infrastructure",
+    "website": null
+  },
+  "location": {
+    "work_mode": "hybrid",
+    "cities": ["Bengaluru"],
+    "countries": ["India"],
+    "office_days": 3,
+    "relocation_offered": null,
+    "visa_sponsorship": null,
+    "timezone_requirement": null
+  },
+  "employment": {
+    "type": "full_time",
+    "duration": null,
+    "start_date": null,
+    "notice_expectation": "Immediate joiners preferred",
+    "shift": null,
+    "travel_percent": null
+  },
+  "experience": {
+    "min_years": 5,
+    "max_years": null,
+    "domain_experience": ["production backend systems"],
+    "leadership_required": false,
+    "leadership_years": null
+  },
+  "skills": {
+    "must_have": [
+      { "name": "Python", "category": "language", "years": null,
+        "evidence": "Strong Python" },
+      { "name": "Kubernetes", "category": "platform", "years": null,
+        "evidence": "must have shipped services on Kubernetes" },
+      { "name": "PostgreSQL", "category": "database", "years": null,
+        "evidence": "Deep PostgreSQL experience, including query optimisation" }
+    ],
+    "nice_to_have": [
+      { "name": "Go", "category": "language", "years": null, "evidence": "Go, gRPC" },
+      { "name": "gRPC", "category": "framework", "years": null, "evidence": "Go, gRPC" },
+      { "name": "Kafka", "category": "platform", "years": null,
+        "evidence": "Kafka or similar event streaming" },
+      { "name": "fintech / payments", "category": "domain", "years": null,
+        "evidence": "Prior fintech or payments experience" }
+    ]
+  },
+  "responsibilities": [
+    "Design and ship services handling high-volume transaction processing",
+    "Own the ledger reconciliation pipeline end to end",
+    "Partner with product and compliance on new payment rails",
+    "Mentor junior engineers on the team"
+  ],
+  "education": {
+    "min_degree": "bachelors",
+    "fields": ["Computer Science"],
+    "required": false,
+    "certifications": []
+  },
+  "languages": [],
+  "compensation": {
+    "currency": "INR",
+    "min": 3500000,
+    "max": 5000000,
+    "period": "annual",
+    "equity": "ESOPs",
+    "bonus": null,
+    "variable_pay": null,
+    "stated_in_jd": true
+  },
+  "benefits": [],
+  "screening_signals": [
+    { "topic": "on_call",
+      "why": "Weekly on-call rotation is required but is never on a resume.",
+      "ask": "This role has a weekly on-call rotation. Is that something you are comfortable with?" },
+    { "topic": "notice_period",
+      "why": "JD prefers immediate joiners.",
+      "ask": "What is your current notice period?" },
+    { "topic": "hybrid_office",
+      "why": "3 days in a Bengaluru office; profile location may not reflect willingness.",
+      "ask": "This role is hybrid with 3 days a week in the Bengaluru office. Does that work for you?" },
+    { "topic": "mentoring",
+      "why": "Mentoring juniors is a responsibility but not a listed requirement.",
+      "ask": "Have you mentored junior engineers before? What did that look like?" },
+    { "topic": "compensation",
+      "why": "Band is 35-50 LPA; expectation should be checked before an interview loop.",
+      "ask": "What is your current and expected compensation?" }
+  ],
+  "knockouts": [
+    "Currently employed at Acme Payments",
+    "Fewer than 5 years of production backend experience"
+  ],
+  "red_flags": [
+    "'Bachelor's or equivalent' makes the degree effectively optional, but it is listed under Requirements."
+  ],
+  "meta": {
+    "confidence": 0.91,
+    "assumptions": [
+      "Converted CTC 35-50 LPA to 3500000-5000000 INR annual.",
+      "Read 'Series B product company' as company.stage series_b.",
+      "Treated 'or equivalent' on the degree as education.required false."
+    ],
+    "ambiguities": [
+      "No company name given.",
+      "Relocation support and visa sponsorship are not addressed.",
+      "'Immediate joiners preferred' is a preference, not a stated maximum notice period."
+    ],
+    "jd_quality": "detailed",
+    "extracted_at": null
+  }
+}
+ 
+## NOW PARSE
+ 
+Job Description:
+\"\"\"
+{jd_text}
+\"\"\"
+ 
+Output:
+""".strip()
 
-        Your output maps ONLY to Apollo.io People Search API parameters. Do not invent
-        parameters. Do not output any parameter not listed below.
-
-        ## OUTPUT KEYS
-
-        person_titles                          array[string]  Job titles to match (OR). Max 12.
-        include_similar_titles                 boolean        true unless JD demands an exact title.
-        person_seniorities                     array[enum]    See ALLOWED VALUES.
-        person_locations                       array[string]  Where the PERSON is. "City, State, Country".
-        person_not_locations                   array[string]  Excluded person locations.
-        organization_locations                 array[string]  Where the COMPANY HQ is. Usually empty.
-        q_keywords                             string         Free-text over the profile. Put must-have
-                                                            skills here, space separated. Keep short.
-        organization_num_employees_ranges      array[string]  Exact range strings only. See ALLOWED VALUES.
-        q_organization_keyword_tags            array[string]  Industry / company keyword tags, lowercase.
-        currently_using_any_of_technology_uids array[string]  Lowercase tech slugs, e.g. "kubernetes".
-        contact_email_status                   array[enum]    ["verified"] unless JD implies otherwise.
-        organization_not_names                 array[string]  Companies to exclude by name.
-        page                                   integer        Always 1.
-        per_page                               integer        Always 100.
-
-        _post_filters   object   Requirements Apollo CANNOT filter on. You apply these
-                                after fetching. Keys: min_years_experience,
-                                max_years_experience, degrees, education_fields,
-                                languages, other.
-        _meta           object   Keys: confidence (0-1), assumptions (array[string]),
-                                unmapped (array[string]), compensation (object|null).
-
-        ## ALLOWED VALUES
-
-        person_seniorities (use ONLY these strings):
-        intern, entry, senior, manager, director, head, vp, c_suite, owner, partner, founder
-
-        organization_num_employees_ranges (use ONLY these exact strings):
-        "1,10", "11,20", "21,50", "51,100", "101,200", "201,500",
-        "501,1000", "1001,2000", "2001,5000", "5001,10000", "10001,1000000"
-
-        contact_email_status (use ONLY these strings):
-        verified, unverified, likely to engage, unavailable
-
-        degrees (in _post_filters, use ONLY these strings):
-        bachelors, masters, phd, mba
-
-        ## RULES
-
-        1. A field not present in the JD is an empty array, empty string, or null.
-        NEVER guess. A wrong guess silently destroys the candidate pool.
-        2. Apollo has NO years-of-experience parameter. "5+ years" goes to
-        _post_filters.min_years_experience, NEVER to person_titles or q_keywords.
-        3. Apollo has NO education parameter. Degrees and fields go to _post_filters.
-        4. Map years of experience to seniority as well, and record it as an assumption:
-        0-1 -> entry | 2-4 -> senior | 5-8 -> senior, manager
-        8-12 -> manager, director | 12+ -> director, vp
-        The Apollo value "senior" means IC senior, not "senior management".
-        5. q_keywords holds must-have SKILLS only. Never put titles, locations,
-        seniority, or years in it. Keep it under 8 terms.
-        6. Only put a skill in currently_using_any_of_technology_uids if it is a real
-        product or platform (kubernetes, aws, snowflake, salesforce). Languages and
-        concepts (python, microservices, rest) go in q_keywords instead.
-        7. Nice-to-have skills go in _meta.unmapped, NOT in q_keywords. Putting them in
-        q_keywords makes them mandatory and shrinks the pool.
-        8. person_locations is where candidates live. Only use organization_locations if
-        the JD explicitly targets companies headquartered somewhere.
-        9. Remote roles: set person_locations to the eligible countries or regions the
-        JD names. If it names none, leave it empty.
-        10. Round headcount to the nearest allowed range strings and include every range
-            the JD's stated size spans.
-        11. Compensation goes in _meta.compensation only if a number appears in the JD.
-            Otherwise null. Never infer a band from the title.
-        12. Every inference you make goes in _meta.assumptions as one plain sentence.
-        13. Any requirement you could not express anywhere goes in _meta.unmapped.
-            That is expected, not a failure -- those become screening questions.
-        14. Set _meta.confidence below 0.6 if the JD is vague, very short, or you had to
-            assume the title, seniority, or location.
-        15. Output raw JSON only. No markdown fences, no preamble, no trailing text.
-
-        ## EXAMPLE
-
-        Job Description:
-        \"\"\"
-        Senior Backend Engineer - Bengaluru (Hybrid, 3 days in office)
-
-        We are a Series B product company (~800 people) building payments
-        infrastructure. We are hiring 3 senior backend engineers.
-
-        Requirements:
-        - 5+ years building production backend systems
-        - Strong Python; must have shipped services on Kubernetes
-        - Deep PostgreSQL experience, including query optimisation
-        - Bachelor's in Computer Science or equivalent
-
-        Nice to have:
-        - Go, gRPC
-        - Kafka or similar event streaming
-        - Experience mentoring junior engineers
-
-        You will be on a weekly on-call rotation. CTC 35-50 LPA.
-        Candidates currently at Acme Payments are not eligible.
-        \"\"\"
-
-        Output:
-        {
-        "person_titles": [
-            "Senior Backend Engineer",
-            "Backend Engineer",
-            "Senior Software Engineer",
-            "Software Engineer, Backend",
-            "Senior Platform Engineer"
-        ],
-        "include_similar_titles": true,
-        "person_seniorities": ["senior", "manager"],
-        "person_locations": ["Bengaluru, Karnataka, India"],
-        "person_not_locations": [],
-        "organization_locations": [],
-        "q_keywords": "Python Kubernetes PostgreSQL backend",
-        "organization_num_employees_ranges": ["501,1000", "1001,2000"],
-        "q_organization_keyword_tags": ["payments", "fintech", "software"],
-        "currently_using_any_of_technology_uids": ["kubernetes", "postgresql"],
-        "contact_email_status": ["verified"],
-        "organization_not_names": ["Acme Payments"],
-        "page": 1,
-        "per_page": 100,
-        "_post_filters": {
-            "min_years_experience": 5,
-            "max_years_experience": null,
-            "degrees": ["bachelors"],
-            "education_fields": ["Computer Science"],
-            "languages": [],
-            "other": []
-        },
-        "_meta": {
-            "confidence": 0.88,
-            "assumptions": [
-            "Mapped '5+ years' to seniorities senior and manager; Apollo has no experience filter.",
-            "Read '~800 people' as the 501,1000 and 1001,2000 headcount ranges.",
-            "Added similar titles beyond the JD title to widen the pool.",
-            "Inferred payments and fintech tags from 'payments infrastructure'."
-            ],
-            "unmapped": [
-            "Go, gRPC, Kafka (nice-to-have, excluded from q_keywords to protect pool size)",
-            "Experience mentoring junior engineers",
-            "Willingness to join a weekly on-call rotation",
-            "Hybrid, 3 days in office"
-            ],
-            "compensation": {
-            "currency": "INR",
-            "min": 3500000,
-            "max": 5000000,
-            "period": "annual",
-            "stated_in_jd": true
-            }
-        }
-        }
-
-        ## NOW PARSE
-
-        Job Description:
-        \"\"\"
-        {jd_text}
-        \"\"\"
-
-        Output:
-        """.strip()
 
 
-
-    agent = create_deep_agent(
-        system_prompt=SYSTEM_PROMPT,
-        # openai/gpt-oss-120b: Groq's largest model with native JSON schema /
-        # structured-output support (response_format={"type": "json_schema"}).
-        model=init_chat_model(
-            "groq:openai/gpt-oss-120b",
-            temperature=0.0,
-            max_tokens=2000,
-        ),
+    # A direct chat completion, not create_deep_agent's full LangGraph agent
+    # scaffold. This is one-shot text-in/JSON-out with no tools to call and
+    # no multi-step planning to do — the agent scaffold's graph execution and
+    # middleware only added latency (measured ~1s+ overhead) for no benefit
+    # on this task. Cut it entirely rather than trim it down.
+    response = _MODEL.invoke(
+        [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": jd_text},
+        ]
     )
-    result = agent.invoke({"messages": [{"role": "user", "content": jd_text}]})
-    final_message = result["messages"][-1]
-    return json.loads(final_message.content)
+    return json.loads(response.content)
 

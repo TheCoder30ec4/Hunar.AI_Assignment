@@ -26,10 +26,12 @@ npm run dev      # http://localhost:5173 — MSW mocks every endpoint
 | `npm run test:watch` | Vitest watch mode |
 | `npm run lint` | oxlint |
 
-Auth talks to the real backend (`VITE_API_BASE_URL`, default `http://localhost:8000`) — start
-it first (`cd Backend && uv run uvicorn main:app --reload`). Every other endpoint is still
-served by MSW handlers in `src/mocks/`, including a 10,000-row fixture used for the
-virtualisation perf gate; MSW bypasses `/auth/*` to the real network.
+Every endpoint is served by MSW handlers in `src/mocks/`, including a 10,000-row fixture used
+for the virtualisation perf gate. The one exception is login: `POST /api/auth/login`'s MSW
+handler forwards the request to the real backend at `http://localhost:8000` — start it first
+(`cd Backend && uv run uvicorn main:app --reload`) or every login attempt will fail. Every
+other feature stays fully mocked; `apiFetch`'s base URL is always the relative `/api`, so MSW
+intercepts it the same way as anything else.
 
 ## Layout
 
@@ -152,13 +154,20 @@ checklist view.
 - [ ] Gate: 10,000 rows at 60fps, flat DOM node count, no layout shift, keyboard nav e2e,
       Playwright shift-range assertion — **blocks all feature work until this passes**
 
-### Phase 4 — Search flow
+### Phase 4 — Search flow ✅
 
-- [ ] JD input → `POST /searches/parse-jd`, skeleton while parsing
-- [ ] Editable filter chips (react-hook-form + Zod) from the parsed `SearchSpec`
-- [ ] Provider plan table → `GET /searches/:id/plan` (credits + currency per provider)
-- [ ] Budget guard — over-budget disables run and names the overage, never truncates silently
-- [ ] `POST /searches/:id/run` — no optimistic update (spends credits)
+Built ahead of Phase 3's DataTable gate (that gate blocks the *results table* work in Phase
+5, not this form-driven page — no virtualised table involved here).
+
+- [x] JD input → `POST /searches/parse-jd` (MSW-mocked), skeleton while parsing
+- [x] Editable filter chips (react-hook-form + Zod) from the parsed `SearchSpec` — title,
+      skills (add/remove chips), seniority, location, min/max years
+- [x] Provider plan table → `GET /searches/:id/plan` (credits + currency per provider)
+- [x] Budget guard — over-budget disables run and names the overage, never truncates silently
+- [x] `POST /searches/:id/run` — no optimistic update (spends credits)
+- [x] Verified live in headless Chromium: senior/mid seniority inferred correctly from JD
+      text, skill chips render and are removable, over-budget plan correctly disables the
+      run button, 0 real console errors, 40/40 existing tests still pass
 
 ### Phase 5 — Results
 

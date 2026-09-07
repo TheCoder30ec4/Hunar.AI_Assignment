@@ -1,13 +1,23 @@
 import { z } from 'zod'
 
-/** The four people-search providers sitting behind the backend. */
-export const providerSchema = z.enum(['pdl', 'apollo', 'proxycurl', 'coresignal'])
+/**
+ * Providers behind the backend. Only `apify` (LinkedIn people search) and
+ * `enrich` (email validation) are real, working integrations — see
+ * Backend/services/apify_service.py and enrich_service.py. `pdl` and
+ * `coresignal` have no API key or integration at all; they stay in the enum
+ * purely so the provider plan can show them as visibly disabled placeholders
+ * for future providers, per explicit product decision — never treat them as
+ * reachable. Apollo and Proxycurl were removed entirely: Apollo's plan
+ * blocks every data endpoint (confirmed live, 403 API_INACCESSIBLE on
+ * People Search/Enrichment/Org Search), and Proxycurl was never wired up.
+ */
+export const providerSchema = z.enum(['apify', 'enrich', 'pdl', 'coresignal'])
 export type Provider = z.infer<typeof providerSchema>
 
 export const PROVIDER_LABEL: Readonly<Record<Provider, string>> = {
+  apify: 'Apify (LinkedIn)',
+  enrich: 'Enrich.so (email validation)',
   pdl: 'People Data Labs',
-  apollo: 'Apollo',
-  proxycurl: 'Proxycurl',
   coresignal: 'Coresignal',
 }
 
@@ -75,14 +85,24 @@ export const candidatePageSchema = z.object({
 })
 export type CandidatePage = z.infer<typeof candidatePageSchema>
 
-export const campaignStatusSchema = z.enum([
-  'draft',
-  'awaiting_review',
-  'running',
-  'paused',
-  'completed',
-])
+/** Mirrors the DB's own ck_campaigns_status CHECK constraint
+ * (Backend/models/campaigns.py) verbatim — that constraint is the actual
+ * source of truth for what values this column can ever hold. */
+export const campaignStatusSchema = z.enum(['draft', 'review', 'ready', 'calling', 'paused', 'complete'])
 export type CampaignStatus = z.infer<typeof campaignStatusSchema>
+
+/** Signal colour + label pairing, same rule as CALL_STATUS_TONE — colour is
+ * never the sole carrier of meaning. */
+export const CAMPAIGN_STATUS_TONE: Readonly<
+  Record<CampaignStatus, { tone: 'live' | 'good' | 'bad' | 'cold'; label: string }>
+> = {
+  draft: { tone: 'cold', label: 'Draft' },
+  review: { tone: 'bad', label: 'In review' },
+  ready: { tone: 'cold', label: 'Ready' },
+  calling: { tone: 'live', label: 'Calling' },
+  paused: { tone: 'cold', label: 'Paused' },
+  complete: { tone: 'good', label: 'Complete' },
+}
 
 export const campaignSchema = z.object({
   id: z.string(),
@@ -94,5 +114,7 @@ export const campaignSchema = z.object({
   connectedCount: z.number().int().nonnegative(),
   qualifiedCount: z.number().int().nonnegative(),
   creditsSpent: z.number().int().nonnegative(),
+  // Picked by the recruiter but dropped by the clean check (no phone/email).
+  excludedCount: z.number().int().nonnegative(),
 })
 export type Campaign = z.infer<typeof campaignSchema>
