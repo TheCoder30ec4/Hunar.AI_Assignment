@@ -1,0 +1,14 @@
+# Secrets — must never enter an image layer.
+.env
+.env.*
+!.env.example
+
+.venv/
+__pycache__/
+*.py[oc]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+.git/
+.gitignore
