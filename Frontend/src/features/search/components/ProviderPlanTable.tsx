@@ -1,4 +1,5 @@
 import { Skeleton } from '@/shared/components/feedback/Skeleton'
+import { Badge } from '@/shared/components/ui/badge'
 import { Button } from '@/shared/components/ui/button'
 import {
   Table,
@@ -8,6 +9,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/shared/components/ui/table'
+import { cn } from '@/shared/lib/cn'
 import { formatCurrency } from '@/shared/lib/format'
 import { PROVIDER_LABEL } from '@/shared/types/domain'
 import type { SearchId } from '@/shared/types/ids'
@@ -62,8 +64,17 @@ export function ProviderPlanTable({
         </TableHeader>
         <TableBody>
           {rows.map((row) => (
-            <TableRow key={row.provider}>
-              <TableCell>{PROVIDER_LABEL[row.provider]}</TableCell>
+            <TableRow key={row.provider} className={cn(!row.enabled && 'opacity-50')}>
+              <TableCell>
+                <span className="inline-flex items-center gap-2">
+                  {PROVIDER_LABEL[row.provider]}
+                  {!row.enabled ? (
+                    <Badge withDot={false} className="text-[10px]">
+                      Not enabled
+                    </Badge>
+                  ) : null}
+                </span>
+              </TableCell>
               <TableCell className="machine text-right">{row.estimatedResults}</TableCell>
               <TableCell className="machine text-right">{row.estimatedCredits}</TableCell>
             </TableRow>

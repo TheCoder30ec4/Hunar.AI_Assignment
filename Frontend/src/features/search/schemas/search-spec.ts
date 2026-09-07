@@ -66,6 +66,20 @@ export const jdExtractionSchema = z.object({
 })
 export type JdExtraction = z.infer<typeof jdExtractionSchema>
 
+/**
+ * One line of the SSE stream from POST /searches/parse-jd/stream. The parse
+ * is a single LLM call with no real sub-steps — `progress` stages are
+ * fabricated on the backend purely to give a sense of motion during the
+ * ~2-3s wait, not tied to actual internal state.
+ */
+export const parseJdStreamEventSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('progress'), stage: z.string(), percent: z.number().int() }),
+  z.object({ type: z.literal('result'), data: jdExtractionSchema }),
+  z.object({ type: z.literal('error'), message: z.string() }),
+])
+export type ParseJdStreamEvent = z.infer<typeof parseJdStreamEventSchema>
+export type ParseJdProgressEvent = Extract<ParseJdStreamEvent, { type: 'progress' }>
+
 const LEVEL_TO_SENIORITY: Readonly<Record<string, SearchSpec['seniority']>> = {
   intern: 'intern',
   entry: 'junior',
@@ -115,6 +129,10 @@ export const providerPlanRowSchema = z.object({
   provider: providerSchema,
   estimatedResults: z.number().int().nonnegative(),
   estimatedCredits: z.number().int().nonnegative(),
+  // Only Apollo is wired up on the backend right now — the other three
+  // providers still appear in the plan (so the recruiter can see what's
+  // coming) but can't be run yet.
+  enabled: z.boolean(),
 })
 export type ProviderPlanRow = z.infer<typeof providerPlanRowSchema>
 

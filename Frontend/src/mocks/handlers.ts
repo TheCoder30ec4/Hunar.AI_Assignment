@@ -73,11 +73,33 @@ async function proxyToRealBackend(request: Request, backendPath: string) {
   })
 }
 
+/**
+ * Same idea as proxyToRealBackend, but passes the response body through as a
+ * live stream instead of buffering it with .text() — buffering would defeat
+ * the entire point of SSE, delivering every progress event at once instead
+ * of as the backend produces them.
+ */
+async function proxyStreamToRealBackend(request: Request, backendPath: string) {
+  const response = await fetch(`${REAL_BACKEND_URL}${backendPath}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: await request.text(),
+  })
+  return new HttpResponse(response.body, {
+    status: response.status,
+    headers: { 'Content-Type': 'text/event-stream' },
+  })
+}
+
 export const handlers = [
   http.post('/api/auth/login', ({ request }) => proxyToRealBackend(request, '/auth/login')),
 
   http.post('/api/searches/parse-jd', ({ request }) =>
     proxyToRealBackend(request, '/searches/parse-jd'),
+  ),
+
+  http.post('/api/searches/parse-jd/stream', ({ request }) =>
+    proxyStreamToRealBackend(request, '/searches/parse-jd/stream'),
   ),
 
   http.get('/api/campaigns', () => HttpResponse.json(CAMPAIGNS)),
@@ -99,12 +121,13 @@ export const handlers = [
     }
     return HttpResponse.json({
       rows: [
-        { provider: 'pdl', estimatedResults: 340, estimatedCredits: 340 },
-        { provider: 'apollo', estimatedResults: 210, estimatedCredits: 420 },
-        { provider: 'proxycurl', estimatedResults: 180, estimatedCredits: 180 },
-        { provider: 'coresignal', estimatedResults: 95, estimatedCredits: 190 },
+        { provider: 'apollo', estimatedResults: 210, estimatedCredits: 420, enabled: true },
+        { provider: 'pdl', estimatedResults: 340, estimatedCredits: 340, enabled: false },
+        { provider: 'proxycurl', estimatedResults: 180, estimatedCredits: 180, enabled: false },
+        { provider: 'coresignal', estimatedResults: 95, estimatedCredits: 190, enabled: false },
       ],
-      totalCredits: 1130,
+      // Only Apollo actually runs, so only its credits count against budget.
+      totalCredits: 420,
       budgetCredits: 1000,
       currency: 'INR',
     })

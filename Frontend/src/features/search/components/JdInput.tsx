@@ -1,20 +1,17 @@
 import { useRef, useState } from 'react'
 
 import { Button } from '@/shared/components/ui/button'
-import { isApiError } from '@/shared/api/errors'
 
-import { useParseJd } from '../hooks/use-new-search'
+import { useParseJdStream } from '../hooks/use-new-search'
 import type { SearchSpec } from '../schemas/search-spec'
-import { FilterChipsSkeleton } from './FilterChipsSkeleton'
+import { ParseProgressBar } from './ParseProgressBar'
 
 export function JdInput({ onParsed }: { readonly onParsed: (spec: SearchSpec) => void }) {
   const [jdText, setJdText] = useState('')
-  const parseJd = useParseJd()
+  const parseJd = useParseJdStream()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const handleParse = (): void => {
-    parseJd.mutate(jdText, { onSuccess: onParsed })
-  }
+  const isStreaming = parseJd.status === 'streaming'
 
   const handleFileChosen = (file: File): void => {
     // Plain text only for now — a JD dropped as a .txt/.md file reads
@@ -23,12 +20,6 @@ export function JdInput({ onParsed }: { readonly onParsed: (spec: SearchSpec) =>
     // later, not something to fake client-side.
     void file.text().then(setJdText)
   }
-
-  const errorMessage = parseJd.isError
-    ? isApiError(parseJd.error)
-      ? parseJd.error.message
-      : 'Could not parse the job description. Try again.'
-    : null
 
   return (
     <div className="flex flex-col gap-3">
@@ -42,14 +33,14 @@ export function JdInput({ onParsed }: { readonly onParsed: (spec: SearchSpec) =>
           onChange={(event) => setJdText(event.target.value)}
           placeholder="Paste the full job description here…"
           rows={10}
-          disabled={parseJd.isPending}
+          disabled={isStreaming}
           className="w-full resize-y rounded-[var(--radius-control)] border border-[var(--color-line)] bg-[var(--color-surface)] p-3 text-[13px] text-[var(--color-ink)] placeholder:text-[var(--color-ink-muted)] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-70"
         />
       </div>
 
-      {errorMessage ? (
+      {parseJd.status === 'error' ? (
         <p role="alert" className="text-[13px] text-[var(--color-sig-bad)]">
-          {errorMessage}
+          {parseJd.errorMessage}
         </p>
       ) : null}
 
@@ -57,12 +48,17 @@ export function JdInput({ onParsed }: { readonly onParsed: (spec: SearchSpec) =>
         <Button
           type="button"
           variant="primary"
-          onClick={handleParse}
-          disabled={jdText.trim().length === 0 || parseJd.isPending}
+          onClick={() => parseJd.start(jdText, onParsed)}
+          disabled={jdText.trim().length === 0 || isStreaming}
         >
-          {parseJd.isPending ? 'Reading…' : 'Read job description'}
+          {isStreaming ? 'Reading…' : 'Read job description'}
         </Button>
-        <Button type="button" variant="secondary" onClick={() => fileInputRef.current?.click()}>
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={isStreaming}
+          onClick={() => fileInputRef.current?.click()}
+        >
           Upload file
         </Button>
         <input
@@ -78,8 +74,8 @@ export function JdInput({ onParsed }: { readonly onParsed: (spec: SearchSpec) =>
         />
       </div>
 
-      {/* Parsing takes seconds — show the shape of what's coming, not a spinner. */}
-      {parseJd.isPending ? <FilterChipsSkeleton /> : null}
+      {/* Parsing takes seconds — show real streamed progress, not a spinner. */}
+      {isStreaming ? <ParseProgressBar stage={parseJd.stage} percent={parseJd.percent} /> : null}
     </div>
   )
 }
