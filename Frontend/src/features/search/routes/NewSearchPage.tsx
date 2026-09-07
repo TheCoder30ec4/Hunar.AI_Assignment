@@ -20,11 +20,12 @@ type PlanStage = { readonly searchId: SearchId } | null
  * spends real credits) only appears once the recruiter has confirmed the
  * filters below it, never before.
  *
- * The two stages sit side by side in a horizontal track; confirming filters
- * slides the track left instead of swapping content in place, so the
- * transition reads as "moving forward a step" rather than a content flash.
- * prefers-reduced-motion collapses the transition duration globally
- * (styles/globals.css), so this needs no separate reduced-motion branch.
+ * Confirming filters splits the screen rather than replacing it: the JD/
+ * filters panel narrows from full-width to the left half, and the provider
+ * plan slides in from the right to fill the other half — both stay visible
+ * together, nothing goes off-screen. prefers-reduced-motion collapses the
+ * transition duration globally (styles/globals.css), so this needs no
+ * separate reduced-motion branch.
  */
 export function NewSearchPage() {
   const navigate = useNavigate()
@@ -44,42 +45,41 @@ export function NewSearchPage() {
     <div className="grid min-h-0 grid-rows-[auto_1fr]">
       <TopBar title="New search" breadcrumb="searches" creditsBalance={8420} />
 
-      <div className="overflow-hidden">
+      <div className="flex h-full min-h-0 overflow-hidden">
         <div
           className={cn(
-            'flex h-full w-[200%] transition-transform duration-500 ease-in-out',
-            showingPlan && '-translate-x-1/2',
+            'h-full overflow-auto border-r border-[var(--color-line)] transition-[width] duration-500 ease-in-out',
+            showingPlan ? 'w-1/2' : 'w-full',
           )}
         >
-          <div
-            className="w-1/2 overflow-auto"
-            // Off-screen once the plan is showing — keeps it out of the tab
-            // order and off-screen-reader radar rather than just visually gone.
-            aria-hidden={showingPlan}
-            inert={showingPlan ? true : undefined}
-          >
-            <div className="mx-auto flex max-w-3xl flex-col gap-4 p-6">
-              <JdInput onParsed={setSpec} />
+          <div className={cn('mx-auto flex flex-col gap-4 p-6', showingPlan ? 'max-w-none' : 'max-w-3xl')}>
+            <JdInput onParsed={setSpec} />
 
-              {spec ? (
-                <FilterChips
-                  initialSpec={spec}
-                  onSubmit={handleSpecSubmit}
-                  isSubmitting={createSearch.isPending}
-                />
-              ) : null}
-            </div>
+            {spec ? (
+              <FilterChips
+                initialSpec={spec}
+                onSubmit={handleSpecSubmit}
+                isSubmitting={createSearch.isPending}
+              />
+            ) : null}
           </div>
+        </div>
 
-          <div className="w-1/2 overflow-auto" aria-hidden={!showingPlan} inert={!showingPlan ? true : undefined}>
-            <div className="mx-auto max-w-3xl p-6">
-              {plan ? (
-                <ProviderPlanTable
-                  searchId={plan.searchId}
-                  onStarted={() => navigate(`/searches/${plan.searchId}`)}
-                />
-              ) : null}
-            </div>
+        <div
+          className={cn(
+            'h-full overflow-auto transition-[width,opacity] duration-500 ease-in-out',
+            showingPlan ? 'w-1/2 opacity-100' : 'w-0 opacity-0',
+          )}
+          aria-hidden={!showingPlan}
+          inert={!showingPlan ? true : undefined}
+        >
+          <div className="max-w-none p-6">
+            {plan ? (
+              <ProviderPlanTable
+                searchId={plan.searchId}
+                onStarted={() => navigate(`/searches/${plan.searchId}`)}
+              />
+            ) : null}
           </div>
         </div>
       </div>
