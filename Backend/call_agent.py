@@ -24,19 +24,11 @@ def _headers():
     return {"X-API-Key": api_key, "Content-Type": "application/json"}
 
 
-# Edit this to change the agent's behavior, then run `create-agent` (first time)
-# or `update-agent` (to apply changes to the existing HUNAR_AGENT_ID).
-AGENT_SETTINGS = {
-    "name": "Personal Caller",
-    "language": "TELUGU",
-    "voice_persona": "NEHA",
-    "persona_name": "NEHA",
-    "agent_prompt": "You are a friendly assistant calling to check in.",
-    "objective": "Say hello and confirm the call works.",
-    "introduction": "Hello! This is a test call from your voice agent.",
-    "result_prompt": "Extract nothing in particular.",
-    "result_schema": {"call_completed": "boolean"},
-}
+# The agent's real configuration lives in core/agent_prompt.py — apply it
+# with `uv run python -m core.agent_prompt`. It used to be duplicated here,
+# and running `update-agent` silently replaced the hiring-screening prompt
+# with a placeholder, so the duplicate is gone deliberately.
+from core.agent_prompt import AGENT_SETTINGS  # noqa: E402
 
 
 def create_agent():
@@ -56,7 +48,7 @@ def update_agent():
 
 def call_me():
     agent_id = os.environ["HUNAR_AGENT_ID"]
-    mobile_number = "+918247350941"  # E.164, e.g. +1234567890
+    mobile_number = "+916305741824"  # E.164, e.g. +1234567890
 
     response = requests.post(
         f"{BASE_URL}/calls/",
@@ -65,6 +57,17 @@ def call_me():
             "agent_id": agent_id,
             "callee_name": "Varun",
             "mobile_number": mobile_number,
+            # The deployed agent (HUNAR_AGENT_ID) is "AI Hiring Assistant" —
+            # its prompt/introduction template these four variables
+            # ({candidate_name}, {job_role}, {company}, {location}), and the
+            # API 422s the call request if any are missing. Check
+            # GET /agents/{id}/ -> custom_variables if this list ever drifts.
+            "custom_data": {
+                "candidate_name": "Varun",
+                "job_role": "Software Engineer",
+                "company": "Hunar.AI",
+                "location": "Bengaluru",
+            },
             "guardrails": {
                 "allowed_days": ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"],
                 "earliest_call_time": "08:00",
@@ -72,7 +75,10 @@ def call_me():
             },
         },
     )
-    response.raise_for_status()
+    if not response.ok:
+        # requests' raise_for_status() drops the response body, which is
+        # where this API's actual validation error lives.
+        sys.exit(f"{response.status_code} error: {response.text}")
     return response.json()
 
 
@@ -84,7 +90,9 @@ if __name__ == "__main__":
             print(create_agent())
         elif command == "update-agent":
             print(update_agent())
-        else:
+        elif command == "call":
             print(call_me())
+        else:
+            sys.exit(f"unknown command {command!r} — use create-agent, update-agent, or call")
     except KeyError as e:
         sys.exit(f"missing env var: {e}")

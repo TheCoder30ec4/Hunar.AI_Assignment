@@ -1,5 +1,6 @@
 import { QueryClientProvider } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
+import { Agentation } from 'agentation'
 import * as TooltipPrimitive from '@radix-ui/react-tooltip'
 import { RouterProvider } from 'react-router'
 
@@ -21,6 +22,12 @@ export function Providers() {
           <RouterProvider router={router} />
         </TooltipPrimitive.Provider>
         {import.meta.env.DEV ? <ReactQueryDevtools initialIsOpen={false} /> : null}
+        {/* Click-to-annotate feedback toolbar; syncs to a coding agent via
+            agentation-mcp when that's configured. Dev-only, and opt-in:
+            its overlay intercepts pointer events across the viewport, which
+            breaks ordinary clicking (and any e2e test) while it's mounted.
+            Enable with VITE_AGENTATION=1 when you actually want to annotate. */}
+        {import.meta.env.DEV && import.meta.env['VITE_AGENTATION'] === '1' ? <Agentation /> : null}
       </QueryClientProvider>
     </ErrorBoundary>
   )

@@ -26,8 +26,12 @@ npm run dev      # http://localhost:5173 — MSW mocks every endpoint
 | `npm run test:watch` | Vitest watch mode |
 | `npm run lint` | oxlint |
 
-There is no backend. Every endpoint is served by MSW handlers in `src/mocks/`, including a
-10,000-row fixture used for the virtualisation perf gate.
+Every endpoint is served by MSW handlers in `src/mocks/`, including a 10,000-row fixture used
+for the virtualisation perf gate. The one exception is login: `POST /api/auth/login`'s MSW
+handler forwards the request to the real backend at `http://localhost:8000` — start it first
+(`cd Backend && uv run uvicorn main:app --reload`) or every login attempt will fail. Every
+other feature stays fully mocked; `apiFetch`'s base URL is always the relative `/api`, so MSW
+intercepts it the same way as anything else.
 
 ## Layout
 
@@ -85,7 +89,139 @@ back into utility space. Components consume tokens, never raw hex.
 - Never display raw transcript text in the answer table; normalised values only, raw on hover.
 - Never optimistically update anything that spends credits or places a call.
 
+## Authentication ✅
+
+Not part of the original 10-phase plan — added once the backend's `/auth/login` existed.
+
+- [x] `POST /auth/login` wired to the real backend (JWT, not MSW-mocked)
+- [x] `features/auth`: Zod schemas, react-hook-form login form, `useLogin` mutation
+- [x] Token persisted to `localStorage` via `shared/api/auth-token.ts`; `apiFetch` reads it
+      and clears it on a 401
+- [x] `useAuthStore` (Zustand) — session flag only, seeded from localStorage on load
+- [x] `RequireAuth` route guard wraps the shell + compliance-review sibling; `/login` is
+      the only public app route besides 404
+- [x] Verified live against the real backend in headless Chromium: both accounts log in,
+      wrong password shows the server's error, reload survives, clearing the token bounces
+      back to `/login`
+
 ## Build phases
 
-Foundation, shell and DataTable are phases 1–3; the plan for all ten lives in
-`.claude/PLAN.md`. Phase 3 gates on 10,000 rows scrolling at 60fps before feature work starts.
+Full detail — API contract, exact traps, exit gates — lives in `.claude/PLAN.md`. This is the
+checklist view.
+
+### Phase 1 — Foundation ✅
+
+- [x] Vite + React 19 + TypeScript strict scaffold, Node 22 pinned (`.nvmrc`)
+- [x] `tsconfig.app.json`: `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`,
+      `verbatimModuleSyntax`, `@/*` path alias
+- [x] Tailwind v4 tokens in `globals.css` (three-layer `@theme` / `:root` / `@theme inline`
+      bridge with shadcn's variable contract)
+- [x] Six shadcn primitives overridden to tokens: Button, Input, Select, Badge, Table, Dialog
+- [x] API client (`shared/api/client.ts`) — Zod-parse boundary, `ApiError` normalisation,
+      `AbortSignal.any` timeout
+- [x] Query key factory, query client (retry policy, `refetchOnWindowFocus: false`)
+- [x] MSW: seeded fixture generator, handlers, browser + Vitest server setup
+- [x] Providers (`ErrorBoundary` → `Query` → `Tooltip` → `Router`) and full router, every
+      route stubbed and lazy
+- [x] Exit gate verified: `tsc -b` clean, build 110KB gzipped, 11/11 routes render, MSW
+      intercepts, tokens applied, 0 console errors, 40/40 tests
+
+### Phase 2 — Shell
+
+- [ ] `useUrlState<T>(schema, defaults)` — Zod-backed `useSearchParams` wrapper, garbage
+      params fail safe to defaults
+- [ ] `AppShell` — CSS grid, 56px rail + content, built for 1600px
+- [ ] `NavRail` — icon nav, `aria-current`, keyboard reachable
+- [ ] `TopBar` — search context, credit balance (mono/tabular-nums), command palette trigger
+- [ ] `LiveStrip` — aggregate call counters, throttled `aria-live="polite"` (~2s flush, never
+      per-event)
+- [ ] `ThreePane` — resizable, widths persisted via Zustand
+- [ ] Four feedback states: `Skeleton` (exact 36px), `EmptyState`, `ErrorState`, `PartialState`
+- [ ] Zustand `ui-store.ts` scoped to pane widths / palette open / nav collapsed only
+- [ ] Gate: `useUrlState` unit tests, all four states render, pane error boundary isolation,
+      skeleton height measured
+
+### Phase 3 — DataTable
+
+- [ ] `useCandidateTable()` headless hook, stable `getRowId`, module-scope column defs
+- [ ] Compound API: `DataTable`, `Toolbar`, `FilterPills`, `ColumnToggle`, `Export`,
+      `Virtualised`, `EmptyState`
+- [ ] `Virtualised.tsx`: sticky header + sticky first column (z-stack), grid-based virtual
+      rows with correct `role`/`aria-rowcount`
+- [ ] Keyboard nav: arrows (with `scrollToIndex`), Enter, Space, Esc
+- [ ] Shift-range multi-select against the sorted row model
+- [ ] CSV export (Blob, no library, quote/comma/newline escaping, CSV-injection guard)
+- [ ] Gate: 10,000 rows at 60fps, flat DOM node count, no layout shift, keyboard nav e2e,
+      Playwright shift-range assertion — **blocks all feature work until this passes**
+
+### Phase 4 — Search flow ✅
+
+Built ahead of Phase 3's DataTable gate (that gate blocks the *results table* work in Phase
+5, not this form-driven page — no virtualised table involved here).
+
+- [x] JD input → `POST /searches/parse-jd` (MSW-mocked), skeleton while parsing
+- [x] Editable filter chips (react-hook-form + Zod) from the parsed `SearchSpec` — title,
+      skills (add/remove chips), seniority, location, min/max years
+- [x] Provider plan table → `GET /searches/:id/plan` (credits + currency per provider)
+- [x] Budget guard — over-budget disables run and names the overage, never truncates silently
+- [x] `POST /searches/:id/run` — no optimistic update (spends credits)
+- [x] Verified live in headless Chromium: senior/mid seniority inferred correctly from JD
+      text, skill chips render and are removable, over-budget plan correctly disables the
+      run button, 0 real console errors, 40/40 existing tests still pass
+
+### Phase 5 — Results
+
+- [ ] Three-pane `/searches/:searchId` layout with `/c/:candidateId` nested in pane 3
+- [ ] Streaming load via `GET /searches/:id/events`, rows appear as providers return
+- [ ] `PartialState` wired to real partial-result responses (not just the MSW simulation)
+- [ ] Per-field source attribution in the detail pane, conflicts shown when providers disagree
+- [ ] Match score popover with a breakdown, never a bare number
+- [ ] Selection feeds campaign creation
+
+### Phase 6 — Campaign dashboard
+
+- [ ] Campaign list + detail routes wired to `GET /campaigns`, `GET /campaigns/:id`
+- [ ] Funnel bar (sourced → called → connected → qualified), each segment filters the table
+- [ ] Answer table (DataTable) — normalised values only, confidence as underline weight +
+      label
+- [ ] Raw transcript never a column — hover/expand only
+- [ ] CSV export of the answer set
+- [ ] Start/pause controls gated on Phase 9's compliance review
+
+### Phase 7 — Live layer
+
+- [ ] `useEventSource` over `GET /campaigns/:id/events`
+- [ ] Sequence-dedupe reducer (`Map<callId, seq>`, drop non-increasing `seq`), unit-tested
+      standalone
+- [ ] Cache patched via `setQueryData`, never invalidate-and-refetch on a status tick
+- [ ] 100ms rAF-throttled batched writes (200 events/sec → one render)
+- [ ] Disconnect handling: degraded indicator, 5s polling fallback, full refetch on reconnect
+- [ ] Live queue rail, throttled the same way
+
+### Phase 8 — Call detail
+
+- [ ] Drawer route `/campaigns/:campaignId/c/:candidateId`
+- [ ] Waveform with extraction ticks, lazy-loaded (not in the main bundle)
+- [ ] Transcript synced to playback (click-to-seek, play-to-highlight)
+- [ ] Editable answers via `PATCH /calls/:id/answers/:key` — optimistic update *is* correct
+      here, with full rollback cycle and audit trail
+- [ ] Audio playhead as Zustand ephemeral state
+
+### Phase 9 — Compliance and settings
+
+- [ ] Full-width `/campaigns/:campaignId/review` (sibling route, no shell) — checklist +
+      blocking violations
+- [ ] **No override control anywhere on the review screen.** None. Do not add one.
+- [ ] Suppression list (DataTable), add/remove, CSV import, optimistic add-with-rollback
+- [ ] Settings tabs: providers, calling window/guardrails, voice agent, team
+
+### Phase 10 — Hardening
+
+- [ ] `axe-core` assertion on every screen
+- [ ] Full keyboard operation audit, focus ring never removed, live regions throttled
+- [ ] `prefers-reduced-motion` disables counter tick and queue slide
+- [ ] Performance budget verified: 10k rows/60fps, 200 events/sec at one render/frame, route
+      chunks <200KB gzipped
+- [ ] Full E2E path: JD → filters → search → select → compliance gate → calling → answers →
+      call detail → book interview
+- [ ] Responsive: <1200px detail pane becomes a drawer; <900px read-only with a stated reason

@@ -1,0 +1,266 @@
+import { z } from 'zod'
+
+import { providerSchema } from '@/shared/types/domain'
+
+/**
+ * What POST /searches/parse-jd returns and what the filter-chip form edits.
+ * Every field is independently editable — a bad parse on one field (e.g. a
+ * garbled seniority guess) must never block editing the others.
+ */
+export const searchSpecSchema = z.object({
+  // Multiple acceptable titles (OR match) — a parsed JD title plus close
+  // synonyms the recruiter widens the pool with, editable as separate chips.
+  titles: z.array(z.string().min(1)).min(1, 'Add at least one title.'),
+  skills: z.array(z.string().min(1)).min(1, 'Add at least one skill.'),
+  niceToHaveSkills: z.array(z.string().min(1)),
+  seniority: z.enum(['intern', 'junior', 'mid', 'senior', 'staff', 'principal', 'lead']),
+  location: z.string().min(1, 'Location is required.'),
+  locationRadiusKm: z.number().int().min(0).max(500).nullable(),
+  minYearsExperience: z.number().int().min(0).max(40),
+  maxYearsExperience: z.number().int().min(0).max(40),
+  // "min,max" chips, e.g. "200,2000" — kept as a display string since the
+  // recruiter edits/adds ranges as whole chips, not two separate numbers.
+  companySizeRanges: z.array(z.string().min(1)),
+  excludeCompanies: z.array(z.string().min(1)),
+})
+export type SearchSpec = z.infer<typeof searchSpecSchema>
+
+/** Cross-field rule Zod's per-field validators can't express alone. */
+export const searchSpecFormSchema = searchSpecSchema.refine(
+  (spec) => spec.minYearsExperience <= spec.maxYearsExperience,
+  {
+    message: 'Minimum experience cannot exceed the maximum.',
+    path: ['maxYearsExperience'],
+  },
+)
+
+/**
+ * What the real POST /searches/parse-jd actually returns — mirrors the
+ * backend's ParseJdResponseDTO (Backend/dtos/search_dto.py). Far richer than
+ * SearchSpec: only the fields the filter-chip form can currently display are
+ * typed strictly here, everything else (screening_signals, knockouts,
+ * red_flags, compensation, evidence per skill) is real extracted data the UI
+ * doesn't show yet — a future pass, not dropped by this schema, just not
+ * asserted on since nothing here reads it.
+ */
+const jdSkillSchema = z.object({ name: z.string() })
+
+export const jdExtractionSchema = z.object({
+  role: z.object({
+    title: z.string().nullable(),
+    level: z.string().nullable(),
+  }),
+  location: z.object({
+    work_mode: z.string().nullable(),
+    cities: z.array(z.string()),
+    countries: z.array(z.string()),
+  }),
+  experience: z.object({
+    min_years: z.number().int().nullable(),
+    max_years: z.number().int().nullable(),
+  }),
+  skills: z.object({
+    must_have: z.array(jdSkillSchema),
+    nice_to_have: z.array(jdSkillSchema),
+  }),
+})
+export type JdExtraction = z.infer<typeof jdExtractionSchema>
+
+/**
+ * One line of the SSE stream from POST /searches/parse-jd/stream. The parse
+ * is a single LLM call with no real sub-steps — `progress` stages are
+ * fabricated on the backend purely to give a sense of motion during the
+ * ~2-3s wait, not tied to actual internal state.
+ */
+export const parseJdStreamEventSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('progress'), stage: z.string(), percent: z.number().int() }),
+  z.object({ type: z.literal('result'), data: jdExtractionSchema }),
+  z.object({ type: z.literal('error'), message: z.string() }),
+])
+export type ParseJdStreamEvent = z.infer<typeof parseJdStreamEventSchema>
+export type ParseJdProgressEvent = Extract<ParseJdStreamEvent, { type: 'progress' }>
+
+const LEVEL_TO_SENIORITY: Readonly<Record<string, SearchSpec['seniority']>> = {
+  intern: 'intern',
+  entry: 'junior',
+  mid: 'mid',
+  senior: 'senior',
+  staff: 'staff',
+  principal: 'principal',
+  lead: 'lead',
+  manager: 'staff',
+  senior_manager: 'principal',
+  director: 'lead',
+  vp: 'lead',
+  c_suite: 'lead',
+}
+
+/**
+ * Adapts the backend's rich extraction down to what the filter-chip form can
+ * edit today. A missing/unrecognised field falls back to a safe default
+ * rather than failing the whole parse — the recruiter can always correct a
+ * wrong chip by hand, but a blocked parse leaves them with nothing to edit.
+ */
+export function jdExtractionToSearchSpec(extraction: JdExtraction): SearchSpec {
+  const location = [...extraction.location.cities, ...extraction.location.countries].join(', ')
+  const mustHave = extraction.skills.must_have.map((skill) => skill.name)
+  const niceToHave = extraction.skills.nice_to_have.map((skill) => skill.name)
+
+  return {
+    titles: extraction.role.title ? [extraction.role.title] : ['Untitled role'],
+    skills: mustHave.length > 0 ? mustHave : ['General'],
+    niceToHaveSkills: niceToHave,
+    seniority: extraction.role.level ? (LEVEL_TO_SENIORITY[extraction.role.level] ?? 'mid') : 'mid',
+    location: location.length > 0 ? location : 'Unspecified',
+    // The extraction doesn't produce a radius — recruiters set this by hand
+    // once they see the parsed location.
+    locationRadiusKm: null,
+    minYearsExperience: extraction.experience.min_years ?? 0,
+    maxYearsExperience: extraction.experience.max_years ?? extraction.experience.min_years ?? 10,
+    // Company-size scoping and exclusions are search-time decisions the
+    // recruiter layers on top, not facts the JD states — the extraction
+    // has nothing to seed these with.
+    companySizeRanges: [],
+    excludeCompanies: [],
+  }
+}
+
+/**
+ * Mirrors Backend/dtos/provider_plan_dto.py exactly. Apify bills in USD,
+ * Enrich.so bills in its own credits — both surfaced natively rather than
+ * force-converted into one fake unit, since there's no confirmed $/credit
+ * rate to convert with (Enrich.so doesn't publish one).
+ */
+/** Field names match Backend/dtos/provider_plan_dto.py's JSON output
+ * verbatim (snake_case, confirmed via a live curl call) — apiFetch does no
+ * case conversion, so the schema has to mirror the wire format exactly. */
+export const providerPlanRowSchema = z.object({
+  provider: providerSchema,
+  enabled: z.boolean(),
+  results: z.number().int().nonnegative(),
+  cost_usd: z.number().nullable(),
+  cost_credits: z.number().int().nullable(),
+  note: z.string().nullable(),
+})
+export type ProviderPlanRow = z.infer<typeof providerPlanRowSchema>
+
+export const providerPlanSchema = z.object({
+  rows: z.array(providerPlanRowSchema),
+  total_cost_usd: z.number(),
+  enrich_credits_remaining: z.number().int(),
+  enrich_credit_cap: z.number().int(),
+  exceeds_credit_cap: z.boolean(),
+})
+export type ProviderPlan = z.infer<typeof providerPlanSchema>
+
+/** Data-source options for the Apify row. Only LinkedIn is a real,
+ * integrated actor — Crunchbase and Twitter/X are genuine Apify actors that
+ * exist and could be wired up, but aren't yet, so they show as disabled
+ * options rather than being omitted (the UI should say what's coming, not
+ * pretend the choice doesn't exist).
+ */
+export const DATA_SOURCE_OPTIONS = [
+  { value: 'linkedin', label: 'LinkedIn', enabled: true },
+  { value: 'crunchbase', label: 'Crunchbase', enabled: false },
+  { value: 'twitter', label: 'Twitter / X', enabled: false },
+] as const
+export type DataSource = (typeof DATA_SOURCE_OPTIONS)[number]['value']
+
+/** Matches Backend/dtos/search_run_dto.py's CreateSearchResponseDTO — plain
+ * snake_case, not aliased to camelCase (unlike the campaign DTOs), so this
+ * mirrors the wire format verbatim. */
+export const createSearchResponseSchema = z.object({
+  search_id: z.string(),
+})
+
+export const runSearchResponseSchema = z.object({
+  status: z.string(),
+  candidates_found: z.number().int(),
+  credits_spent: z.number().int(),
+})
+export type RunSearchResult = z.infer<typeof runSearchResponseSchema>
+
+/** POST /searches/:id/run/stream — real pipeline stages, then a terminal
+ * `result` carrying the campaign the run created, or one `error`. */
+export const runSearchStreamEventSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('progress'), stage: z.string(), percent: z.number().int() }),
+  z.object({
+    type: z.literal('result'),
+    search_id: z.string(),
+    candidates_found: z.number().int(),
+    contacts_found: z.number().int(),
+  }),
+  z.object({ type: z.literal('error'), message: z.string() }),
+])
+export type RunSearchStreamEvent = z.infer<typeof runSearchStreamEventSchema>
+
+/**
+ * What POST /searches actually needs (Backend/dtos/search_run_dto.py's
+ * CreateSearchRequestDTO): the raw JD text, a title, and a
+ * ParseJdResponseDTO-shaped spec for the ranking pipeline to read
+ * (skills.must_have/nice_to_have, role.title, location.cities). The
+ * filter-chip form only edits the narrower SearchSpec, so this rebuilds the
+ * richer shape from those edited chips rather than threading the full
+ * original extraction through the whole editing UI. results_needed isn't
+ * known yet at this point (it's entered on the provider-plan screen, which
+ * only appears after the search row exists) — it goes in the run request instead.
+ */
+export function searchSpecToCreateSearchRequest(spec: SearchSpec, jdText: string) {
+  return {
+    title: spec.titles[0] ?? 'Untitled role',
+    jd_text: jdText,
+    spec: {
+      role: { title: spec.titles[0] ?? null },
+      company: {},
+      location: { cities: spec.location ? [spec.location] : [] },
+      employment: {},
+      experience: {
+        min_years: spec.minYearsExperience,
+        max_years: spec.maxYearsExperience,
+      },
+      skills: {
+        must_have: spec.skills.map((name) => ({ name })),
+        nice_to_have: spec.niceToHaveSkills.map((name) => ({ name })),
+      },
+      education: {},
+      meta: {},
+    },
+  }
+}
+
+/** GET /searches/:id/results — Backend/dtos/search_run_dto.py RankedCandidateDTO, snake_case verbatim. */
+export const rankedCandidateSchema = z.object({
+  candidate_id: z.string(),
+  name: z.string(),
+  title: z.string(),
+  company: z.string(),
+  location: z.string(),
+  phone: z.string().nullable(),
+  email: z.string().nullable(),
+  linkedin_url: z.string().nullable(),
+  match_score: z.number().min(0).max(1),
+  matched_keywords: z.array(z.string()),
+  rank: z.number().int(),
+  source: z.string(),
+})
+export type RankedCandidate = z.infer<typeof rankedCandidateSchema>
+
+export const searchResultsSchema = z.object({
+  search_id: z.string(),
+  status: z.string(),
+  rows: z.array(rankedCandidateSchema),
+  total: z.number().int(),
+})
+export type SearchResults = z.infer<typeof searchResultsSchema>
+
+/** POST /searches/:id/candidates — AddCandidateRequestDTO. */
+export interface AddCandidateRequest {
+  readonly full_name: string
+  readonly title: string | null
+  readonly company: string | null
+  readonly location: string | null
+  readonly phone: string | null
+  readonly email: string | null
+  readonly linkedin_url: string | null
+  readonly about: string | null
+}

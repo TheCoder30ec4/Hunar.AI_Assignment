@@ -11,7 +11,7 @@ export const qk = {
     detail: (id: SearchId) => [...qk.search.all, id] as const,
     results: (id: SearchId, filters: unknown) =>
       [...qk.search.detail(id), 'results', filters] as const,
-    providerPlan: (id: SearchId) => [...qk.search.detail(id), 'provider-plan'] as const,
+    providerPlan: (resultsNeeded: number) => [...qk.search.all, 'provider-plan', resultsNeeded] as const,
   },
   campaign: {
     all: ['campaign'] as const,
@@ -32,5 +32,6 @@ export const qk = {
   settings: {
     all: ['settings'] as const,
     providers: () => [...qk.settings.all, 'providers'] as const,
+    campaign: (id: CampaignId) => [...qk.settings.all, 'campaign', id] as const,
   },
 } as const

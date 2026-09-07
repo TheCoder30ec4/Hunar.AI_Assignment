@@ -32,3 +32,8 @@ test-results/
 # Logs
 *.log
 npm-debug.log*
+
+# Local agent tooling (installed via `npx skills add`), not app code.
+.agents/
+.claude/skills/
+skills-lock.json

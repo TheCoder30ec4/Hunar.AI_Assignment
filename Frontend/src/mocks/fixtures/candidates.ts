@@ -47,7 +47,10 @@ const LOCATIONS = [
   'Noida', 'Remote (India)', 'Singapore', 'Dubai', 'London',
 ] as const
 
-const PROVIDERS: readonly Provider[] = ['pdl', 'apollo', 'proxycurl', 'coresignal'] as const
+// apify (LinkedIn) is the only real provider; pdl/coresignal are unwired
+// placeholders kept only so this fixture can still simulate "found by more
+// than one source" until they're either integrated or removed for good.
+const PROVIDERS: readonly Provider[] = ['apify', 'pdl', 'coresignal'] as const
 
 const CALL_STATUSES: readonly CallStatus[] = [
   'queued', 'dialing', 'connected', 'completed', 'failed', 'no_answer', 'blocked',
