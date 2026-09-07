@@ -85,14 +85,24 @@ export const candidatePageSchema = z.object({
 })
 export type CandidatePage = z.infer<typeof candidatePageSchema>
 
-export const campaignStatusSchema = z.enum([
-  'draft',
-  'awaiting_review',
-  'running',
-  'paused',
-  'completed',
-])
+/** Mirrors the DB's own ck_campaigns_status CHECK constraint
+ * (Backend/models/campaigns.py) verbatim — that constraint is the actual
+ * source of truth for what values this column can ever hold. */
+export const campaignStatusSchema = z.enum(['draft', 'review', 'ready', 'calling', 'paused', 'complete'])
 export type CampaignStatus = z.infer<typeof campaignStatusSchema>
+
+/** Signal colour + label pairing, same rule as CALL_STATUS_TONE — colour is
+ * never the sole carrier of meaning. */
+export const CAMPAIGN_STATUS_TONE: Readonly<
+  Record<CampaignStatus, { tone: 'live' | 'good' | 'bad' | 'cold'; label: string }>
+> = {
+  draft: { tone: 'cold', label: 'Draft' },
+  review: { tone: 'bad', label: 'In review' },
+  ready: { tone: 'cold', label: 'Ready' },
+  calling: { tone: 'live', label: 'Calling' },
+  paused: { tone: 'cold', label: 'Paused' },
+  complete: { tone: 'good', label: 'Complete' },
+}
 
 export const campaignSchema = z.object({
   id: z.string(),
@@ -104,5 +114,7 @@ export const campaignSchema = z.object({
   connectedCount: z.number().int().nonnegative(),
   qualifiedCount: z.number().int().nonnegative(),
   creditsSpent: z.number().int().nonnegative(),
+  // Picked by the recruiter but dropped by the clean check (no phone/email).
+  excludedCount: z.number().int().nonnegative(),
 })
 export type Campaign = z.infer<typeof campaignSchema>

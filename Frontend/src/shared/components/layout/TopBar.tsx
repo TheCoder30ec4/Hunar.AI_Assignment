@@ -15,12 +15,16 @@ export function TopBar({
   creditsBalance,
   callingPaused = false,
   onToggleCalling,
+  callingControlDisabled = false,
 }: {
   readonly title: string
   readonly breadcrumb?: string | undefined
   readonly creditsBalance: number
   readonly callingPaused?: boolean | undefined
   readonly onToggleCalling?: (() => void) | undefined
+  /** True where no dialer exists yet for this screen — the control is
+   * shown (its eventual presence is real) but can't do anything yet. */
+  readonly callingControlDisabled?: boolean | undefined
 }): ReactNode {
   return (
     <header className="flex h-12 items-center gap-4 border-b border-[var(--color-line)] bg-[var(--color-surface)] px-4">
@@ -51,7 +55,14 @@ export function TopBar({
           </span>
         </div>
 
-        <Button type="button" variant="primary" size="sm" onClick={onToggleCalling}>
+        <Button
+          type="button"
+          variant="primary"
+          size="sm"
+          onClick={onToggleCalling}
+          disabled={callingControlDisabled}
+          title={callingControlDisabled ? 'No calling pipeline is running yet.' : undefined}
+        >
           {callingPaused ? 'Resume calling' : 'Pause calling'}
         </Button>
       </div>

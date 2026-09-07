@@ -166,10 +166,101 @@ export const DATA_SOURCE_OPTIONS = [
 ] as const
 export type DataSource = (typeof DATA_SOURCE_OPTIONS)[number]['value']
 
+/** Matches Backend/dtos/search_run_dto.py's CreateSearchResponseDTO — plain
+ * snake_case, not aliased to camelCase (unlike the campaign DTOs), so this
+ * mirrors the wire format verbatim. */
 export const createSearchResponseSchema = z.object({
-  searchId: z.string(),
+  search_id: z.string(),
 })
 
 export const runSearchResponseSchema = z.object({
-  status: z.literal('running'),
+  status: z.string(),
+  candidates_found: z.number().int(),
+  credits_spent: z.number().int(),
 })
+export type RunSearchResult = z.infer<typeof runSearchResponseSchema>
+
+/** POST /searches/:id/run/stream — real pipeline stages, then a terminal
+ * `result` carrying the campaign the run created, or one `error`. */
+export const runSearchStreamEventSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('progress'), stage: z.string(), percent: z.number().int() }),
+  z.object({
+    type: z.literal('result'),
+    search_id: z.string(),
+    candidates_found: z.number().int(),
+    contacts_found: z.number().int(),
+  }),
+  z.object({ type: z.literal('error'), message: z.string() }),
+])
+export type RunSearchStreamEvent = z.infer<typeof runSearchStreamEventSchema>
+
+/**
+ * What POST /searches actually needs (Backend/dtos/search_run_dto.py's
+ * CreateSearchRequestDTO): the raw JD text, a title, and a
+ * ParseJdResponseDTO-shaped spec for the ranking pipeline to read
+ * (skills.must_have/nice_to_have, role.title, location.cities). The
+ * filter-chip form only edits the narrower SearchSpec, so this rebuilds the
+ * richer shape from those edited chips rather than threading the full
+ * original extraction through the whole editing UI. results_needed isn't
+ * known yet at this point (it's entered on the provider-plan screen, which
+ * only appears after the search row exists) — it goes in the run request instead.
+ */
+export function searchSpecToCreateSearchRequest(spec: SearchSpec, jdText: string) {
+  return {
+    title: spec.titles[0] ?? 'Untitled role',
+    jd_text: jdText,
+    spec: {
+      role: { title: spec.titles[0] ?? null },
+      company: {},
+      location: { cities: spec.location ? [spec.location] : [] },
+      employment: {},
+      experience: {
+        min_years: spec.minYearsExperience,
+        max_years: spec.maxYearsExperience,
+      },
+      skills: {
+        must_have: spec.skills.map((name) => ({ name })),
+        nice_to_have: spec.niceToHaveSkills.map((name) => ({ name })),
+      },
+      education: {},
+      meta: {},
+    },
+  }
+}
+
+/** GET /searches/:id/results — Backend/dtos/search_run_dto.py RankedCandidateDTO, snake_case verbatim. */
+export const rankedCandidateSchema = z.object({
+  candidate_id: z.string(),
+  name: z.string(),
+  title: z.string(),
+  company: z.string(),
+  location: z.string(),
+  phone: z.string().nullable(),
+  email: z.string().nullable(),
+  linkedin_url: z.string().nullable(),
+  match_score: z.number().min(0).max(1),
+  matched_keywords: z.array(z.string()),
+  rank: z.number().int(),
+  source: z.string(),
+})
+export type RankedCandidate = z.infer<typeof rankedCandidateSchema>
+
+export const searchResultsSchema = z.object({
+  search_id: z.string(),
+  status: z.string(),
+  rows: z.array(rankedCandidateSchema),
+  total: z.number().int(),
+})
+export type SearchResults = z.infer<typeof searchResultsSchema>
+
+/** POST /searches/:id/candidates — AddCandidateRequestDTO. */
+export interface AddCandidateRequest {
+  readonly full_name: string
+  readonly title: string | null
+  readonly company: string | null
+  readonly location: string | null
+  readonly phone: string | null
+  readonly email: string | null
+  readonly linkedin_url: string | null
+  readonly about: string | null
+}

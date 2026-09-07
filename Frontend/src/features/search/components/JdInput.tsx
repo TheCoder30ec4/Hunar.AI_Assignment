@@ -6,7 +6,11 @@ import { useParseJdStream } from '../hooks/use-new-search'
 import type { SearchSpec } from '../schemas/search-spec'
 import { ParseProgressBar } from './ParseProgressBar'
 
-export function JdInput({ onParsed }: { readonly onParsed: (spec: SearchSpec) => void }) {
+export function JdInput({
+  onParsed,
+}: {
+  readonly onParsed: (spec: SearchSpec, jdText: string) => void
+}) {
   const [jdText, setJdText] = useState('')
   const parseJd = useParseJdStream()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -48,7 +52,7 @@ export function JdInput({ onParsed }: { readonly onParsed: (spec: SearchSpec) =>
         <Button
           type="button"
           variant="primary"
-          onClick={() => parseJd.start(jdText, onParsed)}
+          onClick={() => parseJd.start(jdText, (spec) => onParsed(spec, jdText))}
           disabled={jdText.trim().length === 0 || isStreaming}
         >
           {isStreaming ? 'Reading…' : 'Read job description'}

@@ -26,11 +26,14 @@ export function Virtualised<TData extends { id: string }>({
   overscan = 12,
   onRowClick,
   stickyFirstColumn = false,
+  activeRowId = null,
 }: {
   readonly estimateSize?: number
   readonly overscan?: number
   readonly onRowClick?: ((rowId: string) => void) | undefined
   readonly stickyFirstColumn?: boolean | undefined
+  /** The row currently open in a detail pane — highlighted distinctly from selection. */
+  readonly activeRowId?: string | null | undefined
 }) {
   const table = useDataTableContext<TData>()
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -66,7 +69,7 @@ export function Virtualised<TData extends { id: string }>({
       aria-rowcount={rows.length}
       tabIndex={0}
       onKeyDown={handleKeyDown}
-      className="relative h-full overflow-auto outline-none"
+      className="relative h-full overflow-auto bg-[var(--color-surface)] outline-none"
     >
       <div role="rowgroup" className="sticky top-0 z-20 grid" style={{ gridTemplateColumns }}>
         {table.getHeaderGroups().map((headerGroup) => (
@@ -112,10 +115,13 @@ export function Virtualised<TData extends { id: string }>({
               role="row"
               data-index={virtualRow.index}
               aria-selected={row.getIsSelected()}
+              aria-current={row.id === activeRowId ? 'true' : undefined}
               onClick={(event) => handleRowClick(virtualRow.index, event)}
               className={cn(
-                'grid border-b border-[var(--color-line)] hover:bg-[var(--color-surface-sunk)]',
+                'grid cursor-pointer border-b border-[var(--color-line)] hover:bg-[var(--color-surface-sunk)]',
                 row.getIsSelected() && 'bg-[color-mix(in_srgb,var(--color-accent)_8%,transparent)]',
+                row.id === activeRowId &&
+                  'bg-[color-mix(in_srgb,var(--color-accent)_12%,transparent)] shadow-[inset_2px_0_0_var(--color-accent)]',
               )}
               style={{ gridTemplateColumns, height: estimateSize }}
             >
@@ -134,7 +140,14 @@ export function Virtualised<TData extends { id: string }>({
                         'sticky left-0 z-10 bg-[var(--color-surface)]',
                     )}
                   >
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    {/* One line per row, always: long headlines get an ellipsis
+                        and the full text on hover, never a wrapped/clipped mess. */}
+                    <span
+                      className="min-w-0 truncate"
+                      title={typeof cell.getValue() === 'string' ? (cell.getValue() as string) : undefined}
+                    >
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </span>
                   </div>
                 )
               })}

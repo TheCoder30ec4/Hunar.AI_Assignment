@@ -26,3 +26,26 @@ class ParseJdResultEvent(BaseModel):
 class ParseJdErrorEvent(BaseModel):
     type: Literal["error"] = "error"
     message: str
+
+
+# --- POST /searches/{id}/run/stream ---
+# Unlike the parse-jd stages above, these are REAL pipeline steps
+# (services/search_run_service.py emits them as it reaches each one).
+
+
+class RunSearchProgressEvent(BaseModel):
+    type: Literal["progress"] = "progress"
+    stage: str
+    percent: int
+
+
+class RunSearchResultEvent(BaseModel):
+    type: Literal["result"] = "result"
+    search_id: str
+    candidates_found: int
+    contacts_found: int
+
+
+class RunSearchErrorEvent(BaseModel):
+    type: Literal["error"] = "error"
+    message: str

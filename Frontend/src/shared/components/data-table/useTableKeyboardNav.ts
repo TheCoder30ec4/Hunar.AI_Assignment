@@ -119,6 +119,9 @@ export function useTableKeyboardNav<TData extends { id: string }>({
     [focusedCell, moveFocus, rows, onOpenRow, toggleRowSelected, selectRange, table],
   )
 
+  // Plain click OPENS the row (same as Enter) — a table you click to read
+  // must not silently accumulate a selection. Shift-click ranges, Cmd/Ctrl-
+  // click toggles selection, Space toggles from the keyboard.
   const handleRowClick = useCallback(
     (rowIndex: number, event: React.MouseEvent) => {
       setFocusedCell((prev) => ({ ...prev, rowIndex }))
@@ -126,9 +129,14 @@ export function useTableKeyboardNav<TData extends { id: string }>({
         selectRange(rowIndex)
         return
       }
-      toggleRowSelected(rowIndex)
+      if (event.metaKey || event.ctrlKey) {
+        toggleRowSelected(rowIndex)
+        return
+      }
+      const row = rows[rowIndex]
+      if (row) onOpenRow?.(row.id)
     },
-    [selectRange, toggleRowSelected],
+    [selectRange, toggleRowSelected, rows, onOpenRow],
   )
 
   return { focusedCell, handleKeyDown, handleRowClick }

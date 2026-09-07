@@ -17,7 +17,7 @@ interface DataTableRootProps<TData> {
 function Root<TData>({ table, children }: DataTableRootProps<TData>) {
   return (
     <DataTableContext.Provider value={table as unknown as Table<unknown>}>
-      <div className="grid h-full grid-rows-[auto_1fr]">{children}</div>
+      <div className="grid h-full min-h-0 min-w-0 grid-rows-[auto_1fr]">{children}</div>
     </DataTableContext.Provider>
   )
 }

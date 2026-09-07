@@ -1,7 +1,7 @@
 import { apiFetch } from '@/shared/api/client'
 import { apiErrorFromThrown } from '@/shared/api/errors'
-import type { SearchId } from '@/shared/types/ids'
-import { asSearchId } from '@/shared/types/ids'
+import { readSseStream } from '@/shared/api/sse'
+import { asSearchId, type SearchId } from '@/shared/types/ids'
 
 import {
   createSearchResponseSchema,
@@ -9,9 +9,17 @@ import {
   jdExtractionToSearchSpec,
   parseJdStreamEventSchema,
   providerPlanSchema,
+  rankedCandidateSchema,
   runSearchResponseSchema,
+  runSearchStreamEventSchema,
+  searchResultsSchema,
+  searchSpecToCreateSearchRequest,
+  type AddCandidateRequest,
   type ParseJdProgressEvent,
   type ProviderPlan,
+  type RunSearchResult,
+  type RunSearchStreamEvent,
+  type SearchResults,
   type SearchSpec,
 } from '../schemas/search-spec'
 
@@ -33,69 +41,36 @@ export async function parseJd(jdText: string, signal?: AbortSignal): Promise<Sea
 
 /**
  * The streaming variant of parseJd: yields progress events as they arrive,
- * then resolves with the final SearchSpec. Uses fetch + a manual stream
- * reader rather than EventSource — EventSource only issues GET requests,
- * and the JD text needs to go in a POST body.
+ * then resolves with the final SearchSpec.
  */
 export async function* parseJdStream(
   jdText: string,
   signal?: AbortSignal,
 ): AsyncGenerator<ParseJdProgressEvent, SearchSpec, void> {
-  const response = await fetch('/api/searches/parse-jd/stream', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jd_text: jdText }),
-    ...(signal ? { signal } : {}),
-  })
-
-  if (!response.ok || !response.body) {
-    throw apiErrorFromThrown(new Error(`Stream request failed with status ${String(response.status)}`))
-  }
-
-  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader()
-  // SSE frames are separated by a blank line; a frame can arrive split
-  // across multiple stream chunks, so buffer until a full frame is seen.
-  let buffer = ''
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += value
-
-    let frameBreak: number
-    while ((frameBreak = buffer.indexOf('\n\n')) !== -1) {
-      const frame = buffer.slice(0, frameBreak)
-      buffer = buffer.slice(frameBreak + 2)
-
-      const dataLine = frame.split('\n').find((line) => line.startsWith('data: '))
-      if (!dataLine) continue
-
-      const parsed = parseJdStreamEventSchema.safeParse(JSON.parse(dataLine.slice('data: '.length)))
-      if (!parsed.success) {
-        throw apiErrorFromThrown(new Error('The parser stream returned an unexpected event shape.'))
-      }
-
-      if (parsed.data.type === 'error') {
-        throw apiErrorFromThrown(new Error(parsed.data.message))
-      }
-      if (parsed.data.type === 'result') {
-        return jdExtractionToSearchSpec(parsed.data.data)
-      }
-      yield parsed.data
+  for await (const raw of readSseStream('/searches/parse-jd/stream', { jd_text: jdText }, signal)) {
+    const parsed = parseJdStreamEventSchema.safeParse(raw)
+    if (!parsed.success) {
+      throw apiErrorFromThrown(new Error('The parser stream returned an unexpected event shape.'))
     }
+    if (parsed.data.type === 'error') throw apiErrorFromThrown(new Error(parsed.data.message))
+    if (parsed.data.type === 'result') return jdExtractionToSearchSpec(parsed.data.data)
+    yield parsed.data
   }
-
   throw apiErrorFromThrown(new Error('The parser stream ended without a result.'))
 }
 
-export async function createSearch(spec: SearchSpec, signal?: AbortSignal): Promise<SearchId> {
+export async function createSearch(
+  spec: SearchSpec,
+  jdText: string,
+  signal?: AbortSignal,
+): Promise<SearchId> {
   const response = await apiFetch('/searches', {
     method: 'POST',
-    body: spec,
+    body: searchSpecToCreateSearchRequest(spec, jdText),
     schema: createSearchResponseSchema,
     signal,
   })
-  return asSearchId(response.searchId)
+  return asSearchId(response.search_id)
 }
 
 /**
@@ -120,10 +95,66 @@ export function getProviderPlan(
  * Starts the search. Never called optimistically — this is the exact
  * moment credits get spent against real provider APIs.
  */
-export async function runSearch(searchId: SearchId, signal?: AbortSignal): Promise<void> {
-  await apiFetch(`/searches/${searchId}/run`, {
+export async function runSearch(
+  searchId: SearchId,
+  resultsNeeded: number,
+  signal?: AbortSignal,
+): Promise<RunSearchResult> {
+  return apiFetch(`/searches/${searchId}/run`, {
     method: 'POST',
+    body: { results_needed: resultsNeeded },
     schema: runSearchResponseSchema,
     signal,
+  })
+}
+
+export interface RunSearchOutcome {
+  readonly searchId: SearchId
+  readonly candidatesFound: number
+  readonly contactsFound: number
+}
+
+/**
+ * Streaming run: real stage events while Apify/Groq/Apollo/Enrich.so do
+ * their work. The recruiter then picks candidates on the results page.
+ * Same credit warning as runSearch — this is the call that spends money.
+ */
+export async function* runSearchStream(
+  searchId: SearchId,
+  resultsNeeded: number,
+  signal?: AbortSignal,
+): AsyncGenerator<Extract<RunSearchStreamEvent, { type: 'progress' }>, RunSearchOutcome, void> {
+  for await (const raw of readSseStream(
+    `/searches/${searchId}/run/stream`,
+    { results_needed: resultsNeeded },
+    signal,
+  )) {
+    const parsed = runSearchStreamEventSchema.safeParse(raw)
+    if (!parsed.success) {
+      throw apiErrorFromThrown(new Error('The search stream returned an unexpected event shape.'))
+    }
+    if (parsed.data.type === 'error') throw apiErrorFromThrown(new Error(parsed.data.message))
+    if (parsed.data.type === 'result') {
+      return {
+        searchId: asSearchId(parsed.data.search_id),
+        candidatesFound: parsed.data.candidates_found,
+        contactsFound: parsed.data.contacts_found,
+      }
+    }
+    yield parsed.data
+  }
+  throw apiErrorFromThrown(new Error('The search stream ended without a result.'))
+}
+
+export function getSearchResults(searchId: SearchId, signal?: AbortSignal): Promise<SearchResults> {
+  return apiFetch(`/searches/${searchId}/results`, { schema: searchResultsSchema, signal })
+}
+
+/** Manual add — the person is created and ranked into this search server-side. */
+export function addCandidate(searchId: SearchId, body: AddCandidateRequest) {
+  return apiFetch(`/searches/${searchId}/candidates`, {
+    method: 'POST',
+    body,
+    schema: rankedCandidateSchema,
   })
 }

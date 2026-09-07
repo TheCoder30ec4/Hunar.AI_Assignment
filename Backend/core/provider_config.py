@@ -18,6 +18,13 @@ class ProviderSettings(BaseSettings):
 
     apify_api_key: str
     enrich_api_key: str
+    # .env spells this `apollo_io_key`. Optional: the pipeline degrades to
+    # "no contacts" without it rather than refusing to run.
+    apollo_io_key: str | None = None
+    # Public HTTPS URL Apollo posts async phone results to (see
+    # controllers/webhook_controller.py). Unset locally — phone reveal is
+    # skipped then, email reveal still works synchronously.
+    apollo_webhook_url: str | None = None
 
 
 @lru_cache
@@ -39,6 +46,13 @@ APIFY_MAX_RESULTS_CAP = 1000  # the actor's own documented hard cap
 # base URL and auth header). 1 credit per email checked.
 ENRICH_BASE_URL = "https://dev.enrich.so/api/v3"
 ENRICH_EMAIL_VALIDATION_CREDITS = 1
+# Confirmed against doc.enrich.so/credits-pricing and a live call on
+# 2026-09-07: Email Finder is 10 credits, refunded when found=false; Phone
+# Finder is 500 credits per lookup — the live call returned 402
+# "requires 500 credits, but your balance is 97". Phone lookup is therefore
+# unreachable on this account, not merely expensive.
+ENRICH_EMAIL_FINDER_CREDITS = 10
+ENRICH_PHONE_FINDER_CREDITS = 500
 
 # Confirmed live via GET /email-validation against the real key: the account
 # started at exactly 100 credits. This is the account's total lifetime/

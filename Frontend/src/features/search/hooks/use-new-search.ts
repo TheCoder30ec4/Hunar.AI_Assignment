@@ -1,12 +1,22 @@
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useRef, useState } from 'react'
 
 import { isApiError } from '@/shared/api/errors'
 import { qk } from '@/shared/api/query-keys'
 import type { SearchId } from '@/shared/types/ids'
 
-import { createSearch, getProviderPlan, parseJd, parseJdStream, runSearch } from '../api/new-search'
-import type { SearchSpec } from '../schemas/search-spec'
+import {
+  addCandidate,
+  createSearch,
+  getProviderPlan,
+  getSearchResults,
+  parseJd,
+  parseJdStream,
+  runSearch,
+  runSearchStream,
+  type RunSearchOutcome,
+} from '../api/new-search'
+import type { AddCandidateRequest, SearchSpec } from '../schemas/search-spec'
 
 /** Stage 1: JD text in, parsed SearchSpec out. Not cached — a re-paste is a fresh parse. */
 export function useParseJd() {
@@ -83,7 +93,8 @@ export function useParseJdStream() {
 /** Stage 2 -> 3: the edited spec becomes a search row, which unlocks the plan query. */
 export function useCreateSearch() {
   return useMutation({
-    mutationFn: (spec: SearchSpec) => createSearch(spec),
+    mutationFn: ({ spec, jdText }: { readonly spec: SearchSpec; readonly jdText: string }) =>
+      createSearch(spec, jdText),
   })
 }
 
@@ -109,6 +120,83 @@ export function useProviderPlan(resultsNeeded: number | null) {
 /** Stage 3 confirm: spends real provider credits. Never optimistic. */
 export function useRunSearch() {
   return useMutation({
-    mutationFn: (searchId: SearchId) => runSearch(searchId),
+    mutationFn: ({
+      searchId,
+      resultsNeeded,
+    }: {
+      readonly searchId: SearchId
+      readonly resultsNeeded: number
+    }) => runSearch(searchId, resultsNeeded),
+  })
+}
+
+export interface RunSearchStreamState {
+  readonly status: 'idle' | 'streaming' | 'success' | 'error'
+  /** Every stage seen so far, in order — rendered as a log, not just the latest. */
+  readonly stages: readonly string[]
+  readonly percent: number
+  readonly errorMessage: string | null
+}
+
+const RUN_IDLE: RunSearchStreamState = { status: 'idle', stages: [], percent: 0, errorMessage: null }
+
+/** Streaming counterpart to useRunSearch — same shape as useParseJdStream. */
+export function useRunSearchStream() {
+  const [state, setState] = useState<RunSearchStreamState>(RUN_IDLE)
+  const abortRef = useRef<AbortController | null>(null)
+
+  const start = useCallback(
+    (searchId: SearchId, resultsNeeded: number, onSuccess: (outcome: RunSearchOutcome) => void) => {
+      abortRef.current?.abort()
+      const controller = new AbortController()
+      abortRef.current = controller
+      setState({ status: 'streaming', stages: [], percent: 0, errorMessage: null })
+
+      void (async () => {
+        try {
+          const stream = runSearchStream(searchId, resultsNeeded, controller.signal)
+          let next = await stream.next()
+          while (!next.done) {
+            const { stage, percent } = next.value
+            setState((prev) => ({ ...prev, stages: [...prev.stages, stage], percent }))
+            next = await stream.next()
+          }
+          setState((prev) => ({ ...prev, status: 'success', percent: 100 }))
+          onSuccess(next.value)
+        } catch (error) {
+          if (controller.signal.aborted) return
+          setState((prev) => ({
+            ...prev,
+            status: 'error',
+            errorMessage: isApiError(error) ? error.message : 'The search failed. Try again.',
+          }))
+        }
+      })()
+    },
+    [],
+  )
+
+  const reset = useCallback(() => {
+    abortRef.current?.abort()
+    setState(RUN_IDLE)
+  }, [])
+
+  return { ...state, start, reset }
+}
+
+export function useSearchResults(searchId: SearchId) {
+  return useQuery({
+    queryKey: qk.search.results(searchId, null),
+    queryFn: ({ signal }) => getSearchResults(searchId, signal),
+  })
+}
+
+/** Not optimistic: the server assigns the rank, so the list is refetched
+ * rather than guessed at. */
+export function useAddCandidate(searchId: SearchId) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: AddCandidateRequest) => addCandidate(searchId, body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.search.detail(searchId) }),
   })
 }

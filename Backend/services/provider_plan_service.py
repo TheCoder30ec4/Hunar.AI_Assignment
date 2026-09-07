@@ -1,16 +1,21 @@
 """Computes what a search would actually cost, before spending anything.
 
-Two real providers: Apify runs the LinkedIn search (USD-priced), Enrich.so
-validates whichever email each result includes (credit-priced). pdl and
-coresignal have no integration at all — they're static disabled rows so the
-UI can show "more providers later" without claiming they work.
+Apify runs the LinkedIn search (USD). Apollo.io is the contact provider but
+is blocked on the account's Free plan (403, confirmed live) — so Enrich.so's
+Email Finder (10 credits, refunded on a miss) plus validation (1 credit) is
+what actually produces emails today. Phone numbers: Apollo blocked, and
+Enrich.so's phone lookup costs 500 credits against a ~97 balance (402
+confirmed live) — unreachable, and the plan says so rather than hiding it.
+pdl/coresignal have no integration at all — static disabled rows.
 """
 
 from __future__ import annotations
 
+import logging
+
 from core.provider_config import (
     ENRICH_ACCOUNT_CREDIT_CAP,
-    ENRICH_EMAIL_VALIDATION_CREDITS,
+    ENRICH_PHONE_FINDER_CREDITS,
 )
 from dtos.provider_plan_dto import (
     ProviderCostBreakdownDTO,
@@ -18,21 +23,36 @@ from dtos.provider_plan_dto import (
     ProviderPlanResponseDTO,
 )
 from services import apify_service
-from services.enrich_service import get_last_known_credits_remaining
+from services.enrich_service import (
+    ENRICH_CREDITS_PER_EMAIL,
+    EnrichServiceError,
+    get_balance,
+    get_last_known_credits_remaining,
+)
+
+logger = logging.getLogger(__name__)
 
 
-def build_provider_plan(request: ProviderPlanRequestDTO) -> ProviderPlanResponseDTO:
+async def fetch_enrich_balance() -> int:
+    """Live balance, falling back to the last value a real call returned —
+    a plan must never fail to render because a balance check hiccupped."""
+    try:
+        return await get_balance()
+    except EnrichServiceError:
+        return get_last_known_credits_remaining()
+
+
+async def build_provider_plan(request: ProviderPlanRequestDTO) -> ProviderPlanResponseDTO:
     results_needed = request.results_needed
-
     apify_cost_usd = apify_service.estimate_cost_usd(results_needed)
+    enrich_credits_remaining = await fetch_enrich_balance()
 
-    # Enrich.so cost is a ceiling, not a guarantee: it only actually validates
-    # an email when Apify's result includes one, so real spend is <= this.
-    # Quoting the worst case up front is the same call this app makes for
-    # Apify's own "actor found fewer than requested" case — never understate
-    # a cost the recruiter is about to approve.
-    enrich_estimated_credits = results_needed * ENRICH_EMAIL_VALIDATION_CREDITS
-    enrich_credits_remaining = get_last_known_credits_remaining()
+    # The pipeline stops finding emails once the balance can't cover one
+    # more find+validate, so the real ceiling is the smaller of "every
+    # result" and "what the balance affords" — quote that, not a number the
+    # run could never spend.
+    emails_affordable = min(results_needed, enrich_credits_remaining // ENRICH_CREDITS_PER_EMAIL)
+    enrich_estimated_credits = emails_affordable * ENRICH_CREDITS_PER_EMAIL
 
     rows = [
         ProviderCostBreakdownDTO(
@@ -46,10 +66,12 @@ def build_provider_plan(request: ProviderPlanRequestDTO) -> ProviderPlanResponse
         ProviderCostBreakdownDTO(
             provider="enrich",
             enabled=True,
-            results=results_needed,
+            results=emails_affordable,
             cost_credits=enrich_estimated_credits,
-            note=f"Email validation, 1 credit per result found. "
-            f"{enrich_credits_remaining} of {ENRICH_ACCOUNT_CREDIT_CAP} credits remaining.",
+            note=f"Email finder + validation, {ENRICH_CREDITS_PER_EMAIL} credits per email found "
+            f"(misses are free). Balance covers up to {emails_affordable} of {results_needed} results. "
+            f"Phone lookup needs {ENRICH_PHONE_FINDER_CREDITS} credits per person — "
+            f"not possible with {enrich_credits_remaining} remaining.",
         ),
         ProviderCostBreakdownDTO(
             provider="pdl",
@@ -65,12 +87,8 @@ def build_provider_plan(request: ProviderPlanRequestDTO) -> ProviderPlanResponse
         ),
     ]
 
-    # Enrich.so's per-credit price isn't published (no plan-cost page found
-    # in their docs) — the USD total below is Apify's real spend only.
-    # Enrich.so cost is reported natively in credits (see the "enrich" row
-    # above and enrich_credits_remaining/enrich_credit_cap below), not folded
-    # into this dollar figure, because there's no confirmed $/credit rate to
-    # convert it with.
+    # Enrich.so's per-credit price isn't published — the USD total is
+    # Apify's real spend only; credits are reported natively, not converted.
     total_cost_usd = round(apify_cost_usd, 4)
 
     return ProviderPlanResponseDTO(
@@ -78,5 +96,7 @@ def build_provider_plan(request: ProviderPlanRequestDTO) -> ProviderPlanResponse
         total_cost_usd=total_cost_usd,
         enrich_credits_remaining=enrich_credits_remaining,
         enrich_credit_cap=ENRICH_ACCOUNT_CREDIT_CAP,
-        exceeds_credit_cap=enrich_estimated_credits > enrich_credits_remaining,
+        # Block only when not even one email can be found+validated — the
+        # run itself caps spend per candidate, so a partial balance is fine.
+        exceeds_credit_cap=enrich_credits_remaining < ENRICH_CREDITS_PER_EMAIL,
     )
