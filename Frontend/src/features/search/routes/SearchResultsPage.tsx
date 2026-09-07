@@ -20,7 +20,7 @@ import type { RankedCandidate } from '../schemas/search-spec'
 /** id is candidate_id — useCandidateTable needs a stable `id` field. */
 type Row = RankedCandidate & { readonly id: string; readonly hasContact: boolean }
 
-const COLUMNS: ColumnDef<Row, never>[] = [
+const COLUMNS: ColumnDef<Row, unknown>[] = [
   {
     id: 'select',
     size: 36,
@@ -139,8 +139,6 @@ export function SearchResultsPage() {
       <TopBar
         title="Search results"
         breadcrumb={results.data ? `${String(results.data.total)} candidates` : undefined}
-        creditsBalance={8420}
-        callingControlDisabled
       />
 
       <div className="flex h-full min-h-0 overflow-hidden">
@@ -164,7 +162,10 @@ export function SearchResultsPage() {
           {results.data ? (
             <DataTable table={table}>
               <DataTable.Toolbar>
-                <span className="text-[13px] font-medium text-[var(--color-ink)]">
+                <span
+                  data-tour="results-toolbar"
+                  className="text-[13px] font-medium text-[var(--color-ink)]"
+                >
                   {selectedRows.length === 0
                     ? `${String(rows.length)} candidates`
                     : `${String(selectedRows.length)} selected`}
@@ -211,7 +212,7 @@ export function SearchResultsPage() {
           ) : null}
         </div>
 
-        <div className="w-96 shrink-0 overflow-auto p-5">
+        <div data-tour="candidate-detail" className="w-96 shrink-0 overflow-auto p-5">
           {open ? (
             <CandidateDetailPane
               key={open.id}

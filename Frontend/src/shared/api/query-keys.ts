@@ -32,5 +32,6 @@ export const qk = {
   settings: {
     all: ['settings'] as const,
     providers: () => [...qk.settings.all, 'providers'] as const,
+    campaign: (id: CampaignId) => [...qk.settings.all, 'campaign', id] as const,
   },
 } as const

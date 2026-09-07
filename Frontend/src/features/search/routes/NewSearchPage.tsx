@@ -47,7 +47,7 @@ export function NewSearchPage() {
 
   return (
     <div className="grid min-h-0 grid-rows-[auto_1fr]">
-      <TopBar title="New search" breadcrumb="searches" creditsBalance={8420} />
+      <TopBar title="New search" breadcrumb="searches" />
 
       <div className="flex h-full min-h-0 overflow-hidden">
         <div
@@ -56,7 +56,10 @@ export function NewSearchPage() {
             showingPlan ? 'w-1/2' : 'w-full',
           )}
         >
-          <div className={cn('mx-auto flex flex-col gap-4 p-6', showingPlan ? 'max-w-none' : 'max-w-3xl')}>
+          <div
+            data-tour="jd-panel"
+            className={cn('mx-auto flex flex-col gap-4 p-6', showingPlan ? 'max-w-none' : 'max-w-3xl')}
+          >
             <JdInput
               onParsed={(parsedSpec, parsedJdText) => {
                 setSpec(parsedSpec)
@@ -82,7 +85,7 @@ export function NewSearchPage() {
           aria-hidden={!showingPlan}
           inert={!showingPlan ? true : undefined}
         >
-          <div className="max-w-none p-6">
+          <div data-tour="provider-plan" className="max-w-none p-6">
             {plan && run.status === 'idle' ? (
               <ProviderPlanTable
                 onRun={(resultsNeeded) =>

@@ -25,7 +25,11 @@ import {
  */
 export interface UseCandidateTableOptions<TData extends { id: string }> {
   readonly data: readonly TData[]
-  readonly columns: ColumnDef<TData, never>[]
+  // `unknown`, not `never`, as the cell value type: `never` makes any column
+  // with an accessorFn un-typeable, because the function's return has to be
+  // assignable to it. Cell renderers read row.original directly, so this
+  // type only feeds sorting/filtering comparisons.
+  readonly columns: ColumnDef<TData, unknown>[]
   readonly sorting: SortingState
   readonly onSortingChange: (updater: SortingState | ((prev: SortingState) => SortingState)) => void
   readonly columnVisibility?: VisibilityState | undefined

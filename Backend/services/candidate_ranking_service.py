@@ -74,4 +74,4 @@ def _self_check() -> None:
 
 if __name__ == "__main__":
     _self_check()
-    print("ok")
+    print("ok")  # noqa: T201 — a CLI self-check, not library code

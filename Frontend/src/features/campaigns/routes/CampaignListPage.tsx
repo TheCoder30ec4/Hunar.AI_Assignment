@@ -15,7 +15,7 @@ export function CampaignListPage() {
 
   return (
     <div className="grid min-h-0 grid-rows-[auto_1fr]">
-      <TopBar title="Campaigns" creditsBalance={8420} />
+      <TopBar title="Campaigns" action={{ label: 'Search new role', to: '/searches/new' }} />
       <div className="overflow-auto p-6">
         {campaigns.isPending ? <ListSkeleton /> : null}
 
@@ -34,16 +34,16 @@ export function CampaignListPage() {
         ) : null}
 
         {campaigns.data && campaigns.data.length === 0 ? (
-          <div className="flex flex-col items-start gap-2 text-[13px]">
-            <p className="text-[var(--color-ink-muted)]">No campaigns yet.</p>
-            <Button variant="primary" size="sm" onClick={() => window.location.assign('/searches/new')}>
-              Start a new search
-            </Button>
-          </div>
+          <p className="text-[13px] text-[var(--color-ink-muted)]">
+            No campaigns yet. Search for a job role to get started.
+          </p>
         ) : null}
 
         {campaigns.data && campaigns.data.length > 0 ? (
-          <div className="flex flex-col divide-y divide-[var(--color-line)] rounded-[var(--radius-control)] border border-[var(--color-line)] bg-[var(--color-surface)]">
+          <div
+            data-tour="campaign-list"
+            className="flex flex-col divide-y divide-[var(--color-line)] rounded-[var(--radius-control)] border border-[var(--color-line)] bg-[var(--color-surface)]"
+          >
             {campaigns.data.map((campaign) => (
               <CampaignRow key={campaign.id} campaign={campaign} />
             ))}

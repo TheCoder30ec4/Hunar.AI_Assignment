@@ -16,6 +16,14 @@ async function enableMocking(): Promise<void> {
   await worker.start({
     onUnhandledRequest: 'bypass',
     quiet: true,
+    serviceWorker: {
+      // Scope the worker to the app itself. Without this it also intercepts
+      // top-level navigation requests and tries to pass them through, which
+      // surfaces as an "Uncaught (in promise) TypeError: Failed to fetch"
+      // from mockServiceWorker.js on every page load — noise, not a fault,
+      // but it buries real errors in the console.
+      options: { scope: '/' },
+    },
   })
 }
 

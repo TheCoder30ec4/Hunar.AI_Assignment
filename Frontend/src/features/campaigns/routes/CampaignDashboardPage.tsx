@@ -1,72 +1,152 @@
-import type { ColumnDef } from '@tanstack/react-table'
-import { useMemo, useState } from 'react'
-import { Outlet, useParams } from 'react-router'
+import type { ColumnDef, RowSelectionState, SortingState } from '@tanstack/react-table'
+import { useEffect, useMemo, useState } from 'react'
+import { useParams } from 'react-router'
 
-import { CandidateDetailPane, SOURCE_LABEL } from '@/features/candidates/components/CandidateDetailPane'
+import { DataTable } from '@/shared/components/data-table/DataTable'
+import { useCandidateTable } from '@/shared/components/data-table/useCandidateTable'
 import { Skeleton } from '@/shared/components/feedback/Skeleton'
 import { TopBar } from '@/shared/components/layout/TopBar'
 import { Badge } from '@/shared/components/ui/badge'
 import { Button } from '@/shared/components/ui/button'
-import { DataTable } from '@/shared/components/data-table/DataTable'
-import { useCandidateTable } from '@/shared/components/data-table/useCandidateTable'
-import { CAMPAIGN_STATUS_TONE } from '@/shared/types/domain'
 import { asCampaignId } from '@/shared/types/ids'
 
+import { CallDetailPanel } from '../components/CallDetailPanel'
+import { useBulkCalling, useCampaignCalls } from '../hooks/use-calling'
 import { useCampaign } from '../hooks/use-campaigns'
+import { CALL_STAGE_TONE } from '../schemas/calling'
 import type { CampaignCandidateRow } from '../schemas/campaign-answers'
 
-/** id is candidateId — useCandidateTable requires a stable `id` field, and
- * the wire shape names it candidateId (it's a candidate, not a campaign row). */
-type Row = CampaignCandidateRow & { readonly id: string }
+type Row = CampaignCandidateRow & {
+  readonly id: string
+  /** Live stage from the calling stream, falling back to the persisted one. */
+  readonly liveStage: string
+  readonly answers: Readonly<Record<string, string>>
+  readonly durationSecs: number | null
+}
 
-/** Column widths sum to <=900px deliberately — the table pane sits next to
- * a fixed 384px detail panel, so this has to fit real narrow-viewport widths
- * without relying on horizontal scroll to reach the last column. */
-const COLUMNS: ColumnDef<Row, never>[] = [
+function StageCell({ stage }: { readonly stage: string }) {
+  const tone = CALL_STAGE_TONE[stage]
+  if (!tone) return <span className="text-[var(--color-ink-muted)]">{stage}</span>
+  return <Badge variant={tone.tone === 'neutral' ? undefined : tone.tone}>{tone.label}</Badge>
+}
+
+function answerOr(row: Row, key: string): string {
+  const value = row.answers[key]
+  return value && value !== 'unknown' ? value : '—'
+}
+
+function formatDuration(seconds: number | null): string {
+  if (seconds === null) return '—'
+  const mins = Math.floor(seconds / 60)
+  return `${String(mins)}:${String(Math.round(seconds % 60)).padStart(2, '0')}`
+}
+
+/** Answer columns mirror the voice agent's own result_schema — these are the
+ * fields it actually extracts, not invented ones. */
+const COLUMNS: ColumnDef<Row, unknown>[] = [
+  {
+    id: 'select',
+    size: 36,
+    header: ({ table }) => (
+      <input
+        type="checkbox"
+        aria-label="Select all candidates"
+        checked={table.getIsAllRowsSelected()}
+        onChange={table.getToggleAllRowsSelectedHandler()}
+        onClick={(event) => event.stopPropagation()}
+      />
+    ),
+    cell: ({ row }) => (
+      <input
+        type="checkbox"
+        aria-label={`Select ${row.original.name}`}
+        checked={row.getIsSelected()}
+        onChange={row.getToggleSelectedHandler()}
+        onClick={(event) => event.stopPropagation()}
+      />
+    ),
+    enableSorting: false,
+  },
   {
     accessorKey: 'name',
     header: 'Name',
-    size: 160,
-    cell: ({ row }) => <span className="font-medium text-[var(--color-ink)]">{row.original.name}</span>,
-  },
-  { accessorKey: 'title', header: 'Title', size: 180 },
-  { accessorKey: 'company', header: 'Company', size: 130 },
-  { accessorKey: 'location', header: 'Location', size: 100 },
-  {
-    accessorKey: 'matchScore',
-    header: 'Match',
-    size: 110,
-    cell: ({ row }) => <MatchScoreCell score={row.original.matchScore} />,
-  },
-  {
-    accessorKey: 'source',
-    header: 'Source',
-    size: 110,
+    size: 150,
     cell: ({ row }) => (
-      <Badge withDot={false} className="text-[10px]">
-        {SOURCE_LABEL[row.original.source] ?? row.original.source}
-      </Badge>
+      <span className="font-medium text-[var(--color-ink)]">{row.original.name}</span>
     ),
   },
   {
-    accessorKey: 'stage',
-    header: 'Stage',
+    accessorKey: 'liveStage',
+    header: 'Status',
+    size: 110,
+    cell: ({ row }) => <StageCell stage={row.original.liveStage} />,
+  },
+  {
+    id: 'interest_level',
+    accessorFn: (row) => row.answers['interest_level'] ?? '',
+    header: 'Interest',
     size: 90,
-    cell: ({ row }) => (
-      <Badge withDot={false} className="text-[10px]">
-        {row.original.stage === 'queued' ? 'Queued' : row.original.stage}
-      </Badge>
-    ),
+    cell: ({ row }) => <span>{answerOr(row.original, 'interest_level')}</span>,
   },
   {
-    id: 'contact',
-    header: 'Contact',
+    id: 'requirements',
+    accessorFn: (row) => row.answers['requirements'] ?? '',
+    header: 'Needs',
+    size: 150,
+    cell: ({ row }) => <span>{answerOr(row.original, 'requirements')}</span>,
+  },
+  {
+    id: 'notice_period',
+    accessorFn: (row) => row.answers['notice_period'] ?? '',
+    header: 'Notice',
     size: 100,
-    cell: ({ row }) => {
-      const { phone, email } = row.original
-      if (!phone && !email) return <span className="text-[var(--color-ink-muted)]">—</span>
-      return <span>{phone && email ? 'phone + email' : phone ? 'phone' : 'email'}</span>
-    },
+    cell: ({ row }) => <span className="machine">{answerOr(row.original, 'notice_period')}</span>,
+  },
+  {
+    id: 'expected_ctc',
+    accessorFn: (row) => row.answers['expected_ctc'] ?? '',
+    header: 'Expected',
+    size: 100,
+    cell: ({ row }) => <span className="machine">{answerOr(row.original, 'expected_ctc')}</span>,
+  },
+  {
+    id: 'open_to_relocating',
+    accessorFn: (row) => row.answers['open_to_relocating'] ?? '',
+    header: 'Relocate',
+    size: 85,
+    cell: ({ row }) => <span>{answerOr(row.original, 'open_to_relocating')}</span>,
+  },
+  {
+    id: 'skill_match',
+    accessorFn: (row) => row.answers['skill_match'] ?? '',
+    header: 'Skill Q',
+    size: 80,
+    cell: ({ row }) => <span>{answerOr(row.original, 'skill_match')}</span>,
+  },
+  {
+    id: 'best_time_to_talk',
+    accessorFn: (row) => row.answers['best_time_to_talk'] ?? '',
+    header: 'Best time',
+    size: 100,
+    cell: ({ row }) => <span>{answerOr(row.original, 'best_time_to_talk')}</span>,
+  },
+  {
+    id: 'recommendation',
+    accessorFn: (row) => row.answers['recommendation'] ?? '',
+    header: 'Verdict',
+    size: 100,
+    cell: ({ row }) => <span>{answerOr(row.original, 'recommendation')}</span>,
+  },
+  {
+    id: 'duration',
+    accessorFn: (row) => row.durationSecs ?? 0,
+    header: 'Call',
+    size: 70,
+    cell: ({ row }) => (
+      <span className="machine text-[var(--color-ink-muted)]">
+        {formatDuration(row.original.durationSecs)}
+      </span>
+    ),
   },
 ]
 
@@ -74,20 +154,35 @@ export function CampaignDashboardPage() {
   const { campaignId: campaignIdParam } = useParams()
   const campaignId = asCampaignId(campaignIdParam ?? '')
   const campaign = useCampaign(campaignId)
-  const [sorting, setSorting] = useState<{ id: string; desc: boolean }[]>([
-    { id: 'matchScore', desc: true },
-  ])
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const calls = useCampaignCalls(campaignId)
+  const calling = useBulkCalling(campaignId)
 
-  // The table is the calling list: only rows that passed the clean check.
-  // Excluded picks are listed separately below so nothing silently vanishes.
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'liveStage', desc: false }])
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
+  const [openId, setOpenId] = useState<string | null>(null)
+
+  const callsByCandidate = useMemo(
+    () => new Map((calls.data ?? []).map((c) => [c.candidateId, c])),
+    [calls.data],
+  )
+
   const rows: Row[] = useMemo(
     () =>
       (campaign.data?.candidates ?? [])
         .filter((c) => c.stage !== 'excluded')
-        .map((c) => ({ ...c, id: c.candidateId })),
-    [campaign.data],
+        .map((c) => {
+          const call = callsByCandidate.get(c.candidateId)
+          return {
+            ...c,
+            id: c.candidateId,
+            liveStage: calling.liveStages[c.candidateId] ?? call?.stage ?? c.stage,
+            answers: Object.fromEntries((call?.answers ?? []).map((a) => [a.key, a.value])),
+            durationSecs: call?.durationSecs ?? null,
+          }
+        }),
+    [campaign.data, callsByCandidate, calling.liveStages],
   )
+
   const excluded = campaign.data?.candidates.filter((c) => c.stage === 'excluded') ?? []
 
   const table = useCandidateTable({
@@ -95,20 +190,39 @@ export function CampaignDashboardPage() {
     columns: COLUMNS,
     sorting,
     onSortingChange: setSorting,
+    rowSelection,
+    onRowSelectionChange: setRowSelection,
   })
 
-  const selected = rows.find((row) => row.id === selectedId) ?? rows[0] ?? null
+  const selectedIds = rows.filter((row) => rowSelection[row.id]).map((row) => row.id)
+  const openCall = openId ? callsByCandidate.get(openId) : undefined
+
+  // Esc closes the detail drawer, matching the Esc affordance it shows.
+  useEffect(() => {
+    if (!openId) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpenId(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [openId])
+
+  // Funnel counts, derived from real stages — never fabricated.
+  const funnel = useMemo(() => {
+    const called = rows.filter((r) => r.liveStage !== 'queued').length
+    const connected = rows.filter((r) =>
+      ['connected', 'qualified', 'interested', 'not_a_fit', 'completed'].includes(r.liveStage),
+    ).length
+    const qualified = rows.filter((r) => ['qualified', 'interested'].includes(r.liveStage)).length
+    return { sourced: rows.length, called, connected, qualified }
+  }, [rows])
 
   return (
     <div className="grid min-h-0 grid-rows-[auto_1fr]">
       <TopBar
         title={campaign.data?.name ?? 'Campaign'}
-        breadcrumb={campaign.data ? `${String(campaign.data.candidateCount)} callable` : undefined}
-        creditsBalance={8420}
-        // No dialer exists yet — every candidate stays queued, so pausing
-        // calling has nothing to pause. Disabled rather than hidden: the
-        // control's eventual presence is real, its function isn't yet.
-        callingControlDisabled
+        breadcrumb="campaign"
+        action={{ label: 'Search new role', to: '/searches/new' }}
       />
 
       <div className="flex h-full min-h-0 overflow-hidden">
@@ -123,7 +237,12 @@ export function CampaignDashboardPage() {
           {campaign.isError ? (
             <div role="alert" className="p-4 text-[13px]">
               <p className="text-[var(--color-sig-bad)]">Could not load this campaign.</p>
-              <Button variant="secondary" size="sm" className="mt-2" onClick={() => void campaign.refetch()}>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="mt-2"
+                onClick={() => void campaign.refetch()}
+              >
                 Retry
               </Button>
             </div>
@@ -131,31 +250,80 @@ export function CampaignDashboardPage() {
 
           {campaign.data ? (
             <>
-              <div className="flex items-center gap-2 border-b border-[var(--color-line)] px-4 py-2 text-[13px]">
-                <span className="font-medium text-[var(--color-ink)]">
-                  {campaign.data.candidateCount} callable
-                </span>
-                {excluded.length > 0 ? (
-                  <span className="text-[var(--color-ink-muted)]">
-                    · {excluded.length} excluded (no contact info)
-                  </span>
-                ) : null}
-                <Badge variant={CAMPAIGN_STATUS_TONE[campaign.data.status as keyof typeof CAMPAIGN_STATUS_TONE]?.tone ?? 'neutral'}>
-                  {CAMPAIGN_STATUS_TONE[campaign.data.status as keyof typeof CAMPAIGN_STATUS_TONE]?.label ??
-                    campaign.data.status}
-                </Badge>
+              <div
+                data-tour="funnel"
+                className="flex items-stretch gap-px border-b border-[var(--color-line)] bg-[var(--color-line)]"
+              >
+                <FunnelStat label="Sourced" value={funnel.sourced} total={funnel.sourced} />
+                <FunnelStat label="Called" value={funnel.called} total={funnel.sourced} />
+                <FunnelStat label="Connected" value={funnel.connected} total={funnel.sourced} />
+                <FunnelStat label="Qualified" value={funnel.qualified} total={funnel.sourced} />
               </div>
 
-              {campaign.data.contactNote ? (
-                <p
-                  role="status"
-                  className="border-b border-[var(--color-line)] bg-[var(--color-surface-sunk)] px-4 py-2 text-[12px] text-[var(--color-ink-muted)]"
-                >
-                  {campaign.data.contactNote}
+              {calling.status === 'running' ? (
+                <div className="border-b border-[var(--color-line)] px-4 py-2" aria-live="polite">
+                  <div className="flex items-center gap-3">
+                    <div
+                      role="progressbar"
+                      aria-valuenow={calling.percent}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-label="Calling progress"
+                      className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--color-surface-sunk)]"
+                    >
+                      <div
+                        className="h-full rounded-full bg-[var(--color-accent)] transition-[width] duration-500"
+                        style={{ width: `${String(calling.percent)}%` }}
+                      />
+                    </div>
+                    <span className="text-[12px] text-[var(--color-ink-muted)]">{calling.stage}</span>
+                  </div>
+                </div>
+              ) : null}
+
+              {calling.warnings.length > 0 ? (
+                <div role="status" className="border-b border-[var(--color-line)] bg-[var(--color-surface-sunk)] px-4 py-2 text-[12px] text-[var(--color-ink-muted)]">
+                  {calling.warnings.map((warning) => (
+                    <p key={warning}>{warning}</p>
+                  ))}
+                </div>
+              ) : null}
+
+              {calling.status === 'error' ? (
+                <p role="alert" className="border-b border-[var(--color-line)] px-4 py-2 text-[13px] text-[var(--color-sig-bad)]">
+                  {calling.errorMessage}
                 </p>
               ) : null}
 
               <DataTable table={table}>
+                <DataTable.Toolbar>
+                  <span className="text-[13px] font-medium text-[var(--color-ink)]">
+                    {selectedIds.length > 0
+                      ? `${String(selectedIds.length)} selected`
+                      : `${String(rows.length)} callable`}
+                  </span>
+                  {excluded.length > 0 ? (
+                    <span className="text-[12px] text-[var(--color-ink-muted)]">
+                      · {excluded.length} excluded (no contact info)
+                    </span>
+                  ) : null}
+                  <div className="ml-auto" data-tour="call-button">
+                    <Button
+                      type="button"
+                      variant="primary"
+                      size="sm"
+                      disabled={rows.length === 0 || calling.status === 'running'}
+                      onClick={() => calling.start(selectedIds)}
+                    >
+                      {calling.status === 'running'
+                        ? 'Calling…'
+                        : selectedIds.length > 0
+                          ? `Call ${String(selectedIds.length)} selected`
+                          : `Call all ${String(rows.length)}`}
+                    </Button>
+                  </div>
+                </DataTable.Toolbar>
+
                 {rows.length === 0 ? (
                   <DataTable.EmptyState>
                     <p className="text-[13px] text-[var(--color-ink-muted)]">
@@ -165,74 +333,56 @@ export function CampaignDashboardPage() {
                 ) : (
                   <DataTable.Virtualised
                     estimateSize={40}
-                    activeRowId={selected?.id ?? null}
-                    onRowClick={(rowId) => setSelectedId(rowId)}
+                    activeRowId={openId}
+                    onRowClick={(rowId) => setOpenId(rowId)}
                   />
                 )}
               </DataTable>
-
-              {excluded.length > 0 ? (
-                <details className="border-t border-[var(--color-line)] px-4 py-2 text-[12px]">
-                  <summary className="cursor-pointer text-[var(--color-ink-muted)]">
-                    Excluded by the clean check — no phone or email ({excluded.length})
-                  </summary>
-                  <ul className="mt-1.5 flex flex-col gap-1">
-                    {excluded.map((c) => (
-                      <li key={c.candidateId} className="flex items-center gap-2 text-[var(--color-ink)]">
-                        <span className="font-medium">{c.name}</span>
-                        <span className="text-[var(--color-ink-muted)]">
-                          {[c.title, c.company].filter(Boolean).join(' · ')}
-                        </span>
-                        <Badge withDot={false} className="text-[10px]">
-                          {SOURCE_LABEL[c.source] ?? c.source}
-                        </Badge>
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              ) : null}
             </>
           ) : null}
         </div>
 
-        <div className="w-96 shrink-0 overflow-auto p-5">
-          {selected ? (
-            <>
-              <CandidateDetailPane key={selected.id} candidate={selected} />
-              <Button type="button" variant="primary" className="mt-5 w-full" disabled title="No calling pipeline yet.">
-                Call now
-              </Button>
-            </>
-          ) : (
-            <p className="text-[13px] text-[var(--color-ink-muted)]">Select a candidate to see details.</p>
-          )}
-        </div>
+        {openId ? (
+          <aside
+            data-tour="call-detail"
+            className="flex w-[560px] shrink-0 flex-col overflow-hidden border-l border-[var(--color-line)] bg-[var(--color-surface)]"
+          >
+            {openCall ? (
+              <CallDetailPanel key={openCall.candidateId} call={openCall} onClose={() => setOpenId(null)} />
+            ) : (
+              <div className="p-5 text-[13px] text-[var(--color-ink-muted)]">
+                <p>No call has been placed for this candidate yet.</p>
+                <Button type="button" variant="secondary" size="sm" className="mt-3" onClick={() => setOpenId(null)}>
+                  Close
+                </Button>
+              </div>
+            )}
+          </aside>
+        ) : null}
       </div>
-
-      {/* Call detail drawer renders here as a nested route. */}
-      <Outlet />
     </div>
   )
 }
 
-function MatchScoreCell({ score }: { readonly score: number }) {
-  const pct = Math.round(score * 100)
-  const filled = Math.round(score * 5)
+function FunnelStat({
+  label,
+  value,
+  total,
+}: {
+  readonly label: string
+  readonly value: number
+  readonly total: number
+}) {
+  const percent = total > 0 ? Math.round((value / total) * 100) : null
   return (
-    <span className="machine flex items-center gap-2">
-      <span className="tabular-nums">{pct}</span>
-      <span aria-hidden="true" className="flex gap-0.5">
-        {Array.from({ length: 5 }, (_, i) => (
-          <span
-            key={i}
-            className={
-              i < filled
-                ? 'h-2.5 w-2.5 rounded-[2px] bg-[var(--color-accent)]'
-                : 'h-2.5 w-2.5 rounded-[2px] bg-[var(--color-surface-sunk)]'
-            }
-          />
-        ))}
-      </span>
-    </span>
+    <div className="flex-1 bg-[var(--color-surface)] px-4 py-2.5">
+      <div className="machine text-[18px] font-medium text-[var(--color-ink)]">{value}</div>
+      <div className="text-[12px] text-[var(--color-ink-muted)]">
+        {label}
+        {percent !== null && label !== 'Sourced' ? (
+          <span className="ml-1.5 text-[11px]">{percent}%</span>
+        ) : null}
+      </div>
+    </div>
   )
 }

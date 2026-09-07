@@ -18,8 +18,12 @@ class AuthSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     jwt_secret: str
+    jwt_refresh_secret: str
     jwt_algorithm: str = "HS256"
-    jwt_expires_minutes: int = 60 * 24  # 24h — no refresh-token flow yet.
+    # Short-lived on purpose now that a refresh token exists to renew it
+    # silently — limits how long a leaked access token stays useful.
+    jwt_expires_minutes: int = 15
+    jwt_refresh_expires_days: int = 30
 
 
 @lru_cache
