@@ -70,9 +70,18 @@ export interface GenerateOptions {
   readonly uncalledRatio?: number | undefined
 }
 
+/** 2026-09-07T00:00:00Z — a fixed reference point so generated timestamps
+ *  are a function of the seed alone. */
+const FIXTURE_EPOCH_MS = 1_788_480_000_000
+
 export function generateCandidates(options: GenerateOptions): Candidate[] {
   const { count, seed = 42, uncalledRatio = 0.6 } = options
   const rng = createRng(seed)
+  // Derived from the seed, never from the clock: Date.now() here made two
+  // same-seed runs differ by a millisecond, so the "byte-identical for the
+  // same seed" guarantee held only when both ran inside the same tick.
+  // Fixed epoch = fixtures are reproducible across runs and machines.
+  const now = FIXTURE_EPOCH_MS
 
   return Array.from({ length: count }, (_unused, index): Candidate => {
     const first = rng.pick(FIRST_NAMES)
@@ -107,7 +116,7 @@ export function generateCandidates(options: GenerateOptions): Candidate[] {
       sources,
       callStatus,
       lastCallAt: called
-        ? new Date(Date.now() - rng.int(0, 72 * 3_600_000)).toISOString()
+        ? new Date(now - rng.int(0, 72 * 3_600_000)).toISOString()
         : null,
       suppressed: rng.bool(0.03),
     }

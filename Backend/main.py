@@ -1,3 +1,4 @@
+import logging
 import os
 
 from fastapi import FastAPI
@@ -9,6 +10,16 @@ from controllers.search_controller import router as search_router
 from controllers.settings_controller import router as settings_router
 from controllers.webhook_controller import router as webhook_router
 from Database.core import lifespan_db
+
+# Every module does logging.getLogger(__name__) but nothing ever configured
+# the root logger, so under uvicorn those records went nowhere. One
+# basicConfig here wires all of them to stdout, which is what Render tails.
+# ponytail: stdlib basicConfig, swap for dictConfig if JSON logs are needed.
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    force=True,
+)
 
 app = FastAPI(title="Hunar recruiter console API", lifespan=lifespan_db)
 

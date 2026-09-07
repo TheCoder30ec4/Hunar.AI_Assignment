@@ -1,227 +1,275 @@
-# People Search & Reachout — recruiter console
+# Frontend — recruiter console
 
-Dense internal ops tool. Paste a job description → people-search providers (PDL, Apollo,
-Proxycurl, Coresignal) find candidates → an AI voice agent calls them → answers land in a
-filterable table.
+React SPA for the people-search and reachout console. Paste a job
+description → candidates are sourced and ranked → an AI voice agent calls
+them → their answers land in a filterable table.
 
-Built for a 1600px monitor, 4+ hours of daily use, 10k+ row result sets and 200 concurrent
-live calls. Optimised for information density and keyboard speed.
+Built as a dense internal ops tool: designed for a 1600px monitor, hours of
+daily use, 10k-row result sets, and live call events arriving in bursts.
+Optimised for information density and keyboard speed, not for marketing
+polish.
 
-## Running it
+---
 
-Requires Node 22 (see `.nvmrc`).
+## Stack
+
+| Piece | Choice | Why |
+|---|---|---|
+| Build | Vite 7 | Fast HMR; native ESM |
+| UI | React 19 + TypeScript (strict) | — |
+| Routing | React Router 7 (data router) | Lazy route modules, nested detail panes |
+| Server state | TanStack Query | Caching, dedupe, background refresh |
+| Tables | TanStack Table + Virtual | Headless; virtualisation for 10k rows |
+| Forms | react-hook-form + Zod | One schema validates form *and* response |
+| Styling | Tailwind v4 + shadcn primitives | Token-driven design system |
+| Ephemeral UI state | Zustand | Only what isn't server or URL state |
+| Mocking | MSW | Dev-only; proxies to the real API (see below) |
+| Tests | Vitest | 45 tests |
+
+---
+
+## Local setup
+
+**Requires Node 22** — pinned in `.nvmrc`. This matters: on Node 20 the test
+suite fails to start with `webidl.util.markAsUncloneable is not a function`
+(a jsdom/undici incompatibility, not a broken test).
 
 ```bash
-nvm use
+cd Frontend
+nvm use          # switches to Node 22
 npm install
-npm run dev      # http://localhost:5173 — MSW mocks every endpoint
+npm run dev      # http://localhost:5173
 ```
+
+**Start the backend first.** Unlike a typical mocked frontend, MSW here
+*proxies most endpoints through to the real API* at `http://localhost:8000`
+— auth, JD parsing, searches, campaigns, calls and settings all hit real
+persisted state. Without the backend running, login and everything past it
+will fail. See [`../Backend/README.md`](../Backend/README.md).
 
 | Script | What it does |
 |---|---|
-| `npm run dev` | Dev server with MSW request mocking |
+| `npm run dev` | Dev server with MSW enabled |
 | `npm run build` | Typecheck, then production build |
 | `npm run typecheck` | `tsc -b` only |
-| `npm test` | Vitest run |
+| `npm test` | Vitest run (45 tests) |
 | `npm run test:watch` | Vitest watch mode |
 | `npm run lint` | oxlint |
 
-Every endpoint is served by MSW handlers in `src/mocks/`, including a 10,000-row fixture used
-for the virtualisation perf gate. The one exception is login: `POST /api/auth/login`'s MSW
-handler forwards the request to the real backend at `http://localhost:8000` — start it first
-(`cd Backend && uv run uvicorn main:app --reload`) or every login attempt will fail. Every
-other feature stays fully mocked; `apiFetch`'s base URL is always the relative `/api`, so MSW
-intercepts it the same way as anything else.
+### Environment
 
-## Layout
+Copy `.env.example` to `.env`. The only variable that matters locally:
 
-Feature-sliced. A feature owns its API calls, hooks, components and types; cross-feature
-imports go through the feature's barrel, never into its internals.
+| Variable | Local | Production |
+|---|---|---|
+| `VITE_API_BASE_URL` | `/api` (MSW intercepts this prefix) | The full backend origin, e.g. `https://hunar-api-xxxx.onrender.com` — **no trailing slash** |
+
+Vite inlines env vars **at build time**, so changing this in a hosting
+dashboard requires a redeploy, not just a restart.
+
+### Sign in
+
+`varun30ec4@gmail.com` / `admin@123` (admin), or `user@hunar.ai.com` /
+`hunar.ai@2021` (user).
+
+---
+
+## Where is what
+
+Feature-sliced. A feature owns its API calls, hooks, components, schemas and
+routes; cross-feature imports go through the feature's barrel (`index.ts`),
+never into its internals.
 
 ```
 src/
-├── app/         router, providers, query client
-├── features/    search · candidates · campaigns · calls · compliance · settings
-├── shared/      api client · ui primitives · layout · hooks · lib · types
-├── mocks/       MSW handlers and seeded fixtures
-└── styles/      design tokens
+├── app/
+│   ├── router.tsx        route tree — everything lazy except the shell
+│   ├── providers.tsx     ErrorBoundary → Query → Tooltip → Router
+│   └── query-client.ts   retry policy, refetchOnWindowFocus: false
+├── features/
+│   ├── auth/         login form, token storage, RequireAuth guard
+│   ├── search/       JD input, filter chips, provider plan, run progress
+│   ├── candidates/   result table + candidate detail pane
+│   ├── campaigns/    campaign list/detail, funnel, answer table
+│   ├── calls/        call detail drawer — transcript, answers
+│   ├── compliance/   suppression list
+│   ├── settings/     provider / calling / agent settings
+│   └── tour/         product tour
+├── shared/
+│   ├── api/
+│   │   ├── client.ts      apiFetch — Zod-parse boundary, auth, 401 refresh
+│   │   ├── sse.ts         POST-based SSE reader (EventSource can't POST)
+│   │   ├── auth-token.ts  token persistence
+│   │   ├── errors.ts      ApiError normalisation
+│   │   └── query-keys.ts  query key factory
+│   ├── components/
+│   │   ├── data-table/  DataTable compound component + virtualisation + CSV
+│   │   ├── layout/      AppShell, NavRail, TopBar, RequireAuth
+│   │   ├── feedback/    Skeleton, ErrorBoundary, RouteStub
+│   │   └── ui/          shadcn primitives, retokenised
+│   └── lib/             cn, formatters
+├── mocks/               MSW handlers + seeded fixtures
+└── styles/globals.css   design tokens
 ```
 
-## Conventions that are easy to break
+---
 
-**Every response is Zod-parsed** at `shared/api/client.ts` before a component sees it. Four
-third-party providers sit behind one backend, so the data is inconsistent by nature — parse,
-don't trust. That single boundary is what keeps `any` out of the app.
+## Architecture decisions
 
-**`refetchOnWindowFocus` is off, deliberately.** A recruiter alt-tabbing must not re-run a
-provider search: every refetch spends real credits. Don't "fix" it.
+### Every response is Zod-parsed before a component sees it
 
-**State has four homes and they don't overlap.** Server state → TanStack Query. URL state
-(filters, sort, selection, tabs) → `useUrlState`. Ephemeral UI (pane widths, palette open) →
-Zustand. Forms → react-hook-form. Never mirror server data into Zustand; never put filters in
-`useState`.
+One boundary, in `shared/api/client.ts`. Multiple third-party providers sit
+behind one backend, so the data is inconsistent *by nature* — parse, don't
+trust. This single choke point is what keeps `any` out of the app: if a
+provider changes a field, one schema fails loudly instead of `undefined`
+propagating into a render three layers down.
 
-**Column definitions live at module scope.** A fresh array identity each render resets
-TanStack Table's internal cache — sizing, visibility and order silently reset.
+### State has four homes and they don't overlap
 
-**Optional props that may be explicitly `undefined` are declared `?: T | undefined`.**
-`exactOptionalPropertyTypes` is on, so `{foo?: string}` rejects `{foo: undefined}`.
+| Kind | Home |
+|---|---|
+| Server data | TanStack Query |
+| Filters, sort, selection, tabs | URL search params |
+| Ephemeral UI (pane widths, palette open) | Zustand |
+| Form fields | react-hook-form |
 
-**Type-only imports need `import type`** — `verbatimModuleSyntax` is on.
+Never mirror server data into Zustand; never put filters in `useState`.
+Filters in the URL means a recruiter can share a link to exactly what
+they're looking at, and back/forward work.
 
-### Design tokens
+### `refetchOnWindowFocus` is off, deliberately
 
-Defined in `src/styles/globals.css` in three layers: our tokens under `@theme`, shadcn's
-variable names aliased onto them under `:root`, and `@theme inline` bridging those aliases
-back into utility space. Components consume tokens, never raw hex.
+A recruiter alt-tabbing must not re-run a provider search — every refetch
+spends real credits. This is a correctness decision, not a performance one.
 
-- Mono (`.machine`) is for machine data only — phone numbers, durations, timestamps, IDs,
-  credits, costs. Numeric columns get `tabular-nums`.
-- Signal colours appear only on call state and data quality. Never on chrome, never as a
-  background wash, never as a gradient. Colour is never the sole carrier of meaning — signal
-  badges pair it with a dot and a text label.
-- Shadow is for modals, drawers and the command palette. Tables and panels use borders.
-- Sentence case everywhere. No all-caps labels, no `→` in button text.
+### Nothing that spends money updates optimistically
 
-### Non-negotiables
+Searches, calls and credit-spending actions wait for the server. Optimistic
+updates are used only where a rollback is harmless (editing a call answer,
+adding a suppression entry).
 
-- The compliance gate has **no override control** in the UI — not behind a confirm dialog.
+---
+
+## Challenges and how they were solved
+
+### 1. 10,000 rows without dropping frames
+
+The result set is large enough that rendering every row is not an option.
+`data-table/Virtualised.tsx` uses TanStack Virtual with a sticky header and
+a sticky first column, which is where it gets awkward: sticky positioning
+inside a transformed virtual container needs a deliberate z-stack, and
+virtual rows need correct `role` / `aria-rowcount` attributes because the
+DOM no longer reflects the real row count for screen readers.
+
+A related trap, easy to reintroduce: **column definitions live at module
+scope**. Defining them inline gives the array a fresh identity every render,
+which silently resets TanStack Table's internal cache — sizing, visibility
+and column order all snap back with no error to explain why.
+
+### 2. EventSource cannot POST
+
+Every stream in this app carries a request body (a JD, a candidate
+selection), and `EventSource` only issues GET requests. So
+`shared/api/sse.ts` is a manual `fetch` + `ReadableStream` reader. The part
+that bites: SSE frames are separated by a blank line and **arrive split
+across chunks**, so the reader buffers until it sees a complete frame rather
+than parsing whatever a chunk happens to contain.
+
+### 3. The SSE reader bypassed the API client — twice over
+
+`sse.ts` hardcoded `` fetch(`/api${path}`) `` instead of using the shared
+`BASE_URL`. Locally this was invisible, because `/api` is exactly what MSW
+intercepts. In production it broke: streaming requests went to the *frontend
+host* (Vercel) rather than the API, returning a 404 from Vercel's router —
+an error that looks like a backend bug but never reached the backend. It
+also sent no `Authorization` header, so it would have 401'd immediately
+after the URL was fixed.
+
+Both callers (`search` and `campaigns`) were affected. The fix was in the
+shared function, not at the call sites — `sse.ts` now reuses `BASE_URL` and
+`authHeaders()` from `client.ts`, so there is one definition of "where the
+API is" instead of two.
+
+### 4. A trailing slash in an env var
+
+A deployed `VITE_API_BASE_URL` ending in `/` produced
+`https://api.example.com//auth/login`, which the backend answered with a
+404. Rather than rely on remembering, `BASE_URL` now strips trailing slashes
+at the source, so either spelling of the env var works.
+
+### 5. Mocks that would have lied
+
+Standard MSW usage returns canned fixtures. But most of this app's value is
+in *real* provider behaviour — live credit balances, real ranking, real call
+outcomes — and a fixture asserting "12 candidates found" would have proved
+nothing about whether the pipeline works.
+
+So the handlers in `src/mocks/handlers.ts` mostly **proxy through to the
+real backend** rather than answer from fixtures. Two details that cost time:
+GET and DELETE carry no body, and forwarding an empty string as one makes
+some servers reject the request outright; and a 204 has no body to read
+back, which `HttpResponse` rejects outright. Streaming responses need a
+separate proxy that passes the body through untouched instead of buffering
+it, or SSE stops being streaming.
+
+What stays genuinely mocked: the 10,000-row fixture (a perf gate, not a
+behaviour) and individual candidate lookups.
+
+### 6. Strict TypeScript settings that reject ordinary-looking code
+
+Three compiler options in `tsconfig.app.json` change how code must be
+written, and each produces a confusing error the first time:
+
+- `exactOptionalPropertyTypes` — `{foo?: string}` **rejects** `{foo: undefined}`. Props that may be explicitly undefined must be declared `?: T | undefined`.
+- `verbatimModuleSyntax` — type imports must use `import type`.
+- `noUncheckedIndexedAccess` — `array[0]` is `T | undefined`, so indexing needs a guard.
+
+They stay on because they catch exactly the class of bug that third-party
+data produces.
+
+### 7. Live call events arrive faster than React should render
+
+Call status ticks arrive in bursts. Two rules keep that from becoming a
+render storm: the query cache is **patched** via `setQueryData` rather than
+invalidated (an invalidate-and-refetch on every tick would hammer the API
+for data already in hand), and `aria-live` regions are throttled rather than
+announced per event — a screen reader reading every tick is unusable.
+
+### 8. Node 20 silently fails the test suite
+
+`npm test` on Node 20 dies with `webidl.util.markAsUncloneable is not a
+function` from jsdom's undici dependency — an error that says nothing about
+the actual cause. `.nvmrc` pins Node 22; `nvm use` before installing avoids
+the whole detour. Under Node 22 the suite is 45/45 green.
+
+---
+
+## Design system
+
+Tokens live in `src/styles/globals.css` in three layers: our tokens under
+`@theme`, shadcn's variable names aliased onto them under `:root`, and
+`@theme inline` bridging those aliases back into utility space. Components
+consume tokens, never raw hex.
+
+- **Mono (`.machine`) is for machine data only** — phone numbers, durations, timestamps, IDs, credits, costs. Numeric columns get `tabular-nums` so digits align down the column.
+- **Signal colours appear only on call state and data quality.** Never on chrome, never as a background wash, never as a gradient. Colour is never the sole carrier of meaning: signal badges pair it with a dot and a text label.
+- **Shadow is for modals, drawers and the command palette.** Tables and panels use borders.
+- Sentence case everywhere. No all-caps labels.
+
+## Non-negotiables
+
+These are product rules, not preferences:
+
+- The compliance gate has **no override control** in the UI — not even behind a confirm dialog.
 - Never display raw transcript text in the answer table; normalised values only, raw on hover.
 - Never optimistically update anything that spends credits or places a call.
 
-## Authentication ✅
+---
 
-Not part of the original 10-phase plan — added once the backend's `/auth/login` existed.
+## Deployment
 
-- [x] `POST /auth/login` wired to the real backend (JWT, not MSW-mocked)
-- [x] `features/auth`: Zod schemas, react-hook-form login form, `useLogin` mutation
-- [x] Token persisted to `localStorage` via `shared/api/auth-token.ts`; `apiFetch` reads it
-      and clears it on a 401
-- [x] `useAuthStore` (Zustand) — session flag only, seeded from localStorage on load
-- [x] `RequireAuth` route guard wraps the shell + compliance-review sibling; `/login` is
-      the only public app route besides 404
-- [x] Verified live against the real backend in headless Chromium: both accounts log in,
-      wrong password shows the server's error, reload survives, clearing the token bounces
-      back to `/login`
+Vercel. Set `VITE_API_BASE_URL` to the backend origin with **no trailing
+slash** and redeploy (build-time inlining). MSW is disabled automatically in
+production builds — `enableMocking()` returns early unless `import.meta.env.DEV`.
 
-## Build phases
-
-Full detail — API contract, exact traps, exit gates — lives in `.claude/PLAN.md`. This is the
-checklist view.
-
-### Phase 1 — Foundation ✅
-
-- [x] Vite + React 19 + TypeScript strict scaffold, Node 22 pinned (`.nvmrc`)
-- [x] `tsconfig.app.json`: `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`,
-      `verbatimModuleSyntax`, `@/*` path alias
-- [x] Tailwind v4 tokens in `globals.css` (three-layer `@theme` / `:root` / `@theme inline`
-      bridge with shadcn's variable contract)
-- [x] Six shadcn primitives overridden to tokens: Button, Input, Select, Badge, Table, Dialog
-- [x] API client (`shared/api/client.ts`) — Zod-parse boundary, `ApiError` normalisation,
-      `AbortSignal.any` timeout
-- [x] Query key factory, query client (retry policy, `refetchOnWindowFocus: false`)
-- [x] MSW: seeded fixture generator, handlers, browser + Vitest server setup
-- [x] Providers (`ErrorBoundary` → `Query` → `Tooltip` → `Router`) and full router, every
-      route stubbed and lazy
-- [x] Exit gate verified: `tsc -b` clean, build 110KB gzipped, 11/11 routes render, MSW
-      intercepts, tokens applied, 0 console errors, 40/40 tests
-
-### Phase 2 — Shell
-
-- [ ] `useUrlState<T>(schema, defaults)` — Zod-backed `useSearchParams` wrapper, garbage
-      params fail safe to defaults
-- [ ] `AppShell` — CSS grid, 56px rail + content, built for 1600px
-- [ ] `NavRail` — icon nav, `aria-current`, keyboard reachable
-- [ ] `TopBar` — search context, credit balance (mono/tabular-nums), command palette trigger
-- [ ] `LiveStrip` — aggregate call counters, throttled `aria-live="polite"` (~2s flush, never
-      per-event)
-- [ ] `ThreePane` — resizable, widths persisted via Zustand
-- [ ] Four feedback states: `Skeleton` (exact 36px), `EmptyState`, `ErrorState`, `PartialState`
-- [ ] Zustand `ui-store.ts` scoped to pane widths / palette open / nav collapsed only
-- [ ] Gate: `useUrlState` unit tests, all four states render, pane error boundary isolation,
-      skeleton height measured
-
-### Phase 3 — DataTable
-
-- [ ] `useCandidateTable()` headless hook, stable `getRowId`, module-scope column defs
-- [ ] Compound API: `DataTable`, `Toolbar`, `FilterPills`, `ColumnToggle`, `Export`,
-      `Virtualised`, `EmptyState`
-- [ ] `Virtualised.tsx`: sticky header + sticky first column (z-stack), grid-based virtual
-      rows with correct `role`/`aria-rowcount`
-- [ ] Keyboard nav: arrows (with `scrollToIndex`), Enter, Space, Esc
-- [ ] Shift-range multi-select against the sorted row model
-- [ ] CSV export (Blob, no library, quote/comma/newline escaping, CSV-injection guard)
-- [ ] Gate: 10,000 rows at 60fps, flat DOM node count, no layout shift, keyboard nav e2e,
-      Playwright shift-range assertion — **blocks all feature work until this passes**
-
-### Phase 4 — Search flow ✅
-
-Built ahead of Phase 3's DataTable gate (that gate blocks the *results table* work in Phase
-5, not this form-driven page — no virtualised table involved here).
-
-- [x] JD input → `POST /searches/parse-jd` (MSW-mocked), skeleton while parsing
-- [x] Editable filter chips (react-hook-form + Zod) from the parsed `SearchSpec` — title,
-      skills (add/remove chips), seniority, location, min/max years
-- [x] Provider plan table → `GET /searches/:id/plan` (credits + currency per provider)
-- [x] Budget guard — over-budget disables run and names the overage, never truncates silently
-- [x] `POST /searches/:id/run` — no optimistic update (spends credits)
-- [x] Verified live in headless Chromium: senior/mid seniority inferred correctly from JD
-      text, skill chips render and are removable, over-budget plan correctly disables the
-      run button, 0 real console errors, 40/40 existing tests still pass
-
-### Phase 5 — Results
-
-- [ ] Three-pane `/searches/:searchId` layout with `/c/:candidateId` nested in pane 3
-- [ ] Streaming load via `GET /searches/:id/events`, rows appear as providers return
-- [ ] `PartialState` wired to real partial-result responses (not just the MSW simulation)
-- [ ] Per-field source attribution in the detail pane, conflicts shown when providers disagree
-- [ ] Match score popover with a breakdown, never a bare number
-- [ ] Selection feeds campaign creation
-
-### Phase 6 — Campaign dashboard
-
-- [ ] Campaign list + detail routes wired to `GET /campaigns`, `GET /campaigns/:id`
-- [ ] Funnel bar (sourced → called → connected → qualified), each segment filters the table
-- [ ] Answer table (DataTable) — normalised values only, confidence as underline weight +
-      label
-- [ ] Raw transcript never a column — hover/expand only
-- [ ] CSV export of the answer set
-- [ ] Start/pause controls gated on Phase 9's compliance review
-
-### Phase 7 — Live layer
-
-- [ ] `useEventSource` over `GET /campaigns/:id/events`
-- [ ] Sequence-dedupe reducer (`Map<callId, seq>`, drop non-increasing `seq`), unit-tested
-      standalone
-- [ ] Cache patched via `setQueryData`, never invalidate-and-refetch on a status tick
-- [ ] 100ms rAF-throttled batched writes (200 events/sec → one render)
-- [ ] Disconnect handling: degraded indicator, 5s polling fallback, full refetch on reconnect
-- [ ] Live queue rail, throttled the same way
-
-### Phase 8 — Call detail
-
-- [ ] Drawer route `/campaigns/:campaignId/c/:candidateId`
-- [ ] Waveform with extraction ticks, lazy-loaded (not in the main bundle)
-- [ ] Transcript synced to playback (click-to-seek, play-to-highlight)
-- [ ] Editable answers via `PATCH /calls/:id/answers/:key` — optimistic update *is* correct
-      here, with full rollback cycle and audit trail
-- [ ] Audio playhead as Zustand ephemeral state
-
-### Phase 9 — Compliance and settings
-
-- [ ] Full-width `/campaigns/:campaignId/review` (sibling route, no shell) — checklist +
-      blocking violations
-- [ ] **No override control anywhere on the review screen.** None. Do not add one.
-- [ ] Suppression list (DataTable), add/remove, CSV import, optimistic add-with-rollback
-- [ ] Settings tabs: providers, calling window/guardrails, voice agent, team
-
-### Phase 10 — Hardening
-
-- [ ] `axe-core` assertion on every screen
-- [ ] Full keyboard operation audit, focus ring never removed, live regions throttled
-- [ ] `prefers-reduced-motion` disables counter tick and queue slide
-- [ ] Performance budget verified: 10k rows/60fps, 200 events/sec at one render/frame, route
-      chunks <200KB gzipped
-- [ ] Full E2E path: JD → filters → search → select → compliance gate → calling → answers →
-      call detail → book interview
-- [ ] Responsive: <1200px detail pane becomes a drawer; <900px read-only with a stated reason
+Full instructions: [`../DEPLOY.md`](../DEPLOY.md).

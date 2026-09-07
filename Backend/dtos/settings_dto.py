@@ -5,9 +5,13 @@ suppression list. camelCase on the wire, matching campaign_dto.py.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
+
+# Hunar's documented allowed values for retry_config.retry_interval_hours.
+RetryIntervalHours = Literal[3, 6, 9, 12, 24]
 
 
 class CampaignSettingsDTO(BaseModel):
@@ -28,7 +32,10 @@ class CampaignSettingsDTO(BaseModel):
     allowed_days: list[str] = Field(
         default_factory=lambda: ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
     )
-    retry_interval_hours: int = Field(default=4, ge=0, le=168)
+    # Hunar accepts ONLY these values and 422s on anything else, so this is
+    # a Literal rather than a range — ge=0/le=168 accepted 169 values of
+    # which 5 were real, and the rejection only surfaced at dial time.
+    retry_interval_hours: RetryIntervalHours = 3
 
 
 class SuppressionEntryDTO(BaseModel):

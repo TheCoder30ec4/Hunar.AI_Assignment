@@ -104,7 +104,10 @@ async def create_bulk_calls(
             ],
             "guardrails": guardrails,
             "timezone": timezone,
-            "retry_config": retry_config or {"max_retry_count": 0, "retry_interval_hours": 0},
+            # retry_interval_hours must be one of [3, 6, 9, 12, 24] even when no
+            # retries are requested — 0 is rejected with a 422, so the "no
+            # retries" case is max_retry_count=0 with a valid interval.
+            "retry_config": retry_config or {"max_retry_count": 0, "retry_interval_hours": 3},
             "remove_invalid_rows": False,
             "remove_duplicate_phone_numbers": True,
         }

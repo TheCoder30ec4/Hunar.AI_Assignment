@@ -19,6 +19,7 @@ from core.identifier_hash import hash_identifier
 from dtos.settings_dto import (
     AddSuppressionRequestDTO,
     CampaignSettingsDTO,
+    RetryIntervalHours,
     SuppressionEntryDTO,
 )
 from models.campaigns import Campaign
@@ -40,6 +41,20 @@ def _parse(value: str) -> time:
     return time(int(hour), int(minute))
 
 
+
+def _valid_retry_interval(value: object) -> RetryIntervalHours:
+    """voice_config is free-form JSON, so a row written before the provider's
+    allowed set was enforced can hold anything (4 was the old default). Snap
+    to the nearest allowed value rather than 500ing on read — the campaign is
+    still perfectly usable, and dialing would 422 on the stored value.
+    """
+    allowed = (3, 6, 9, 12, 24)
+    if value in allowed:
+        return value  # type: ignore[return-value]
+    if isinstance(value, int) and not isinstance(value, bool):
+        return min(allowed, key=lambda a: (abs(a - value), a))  # type: ignore[return-value]
+    return 3
+
 async def get_campaign_settings(db: AsyncSession, campaign_id: uuid.UUID) -> CampaignSettingsDTO:
     campaign = await db.get(Campaign, campaign_id)
     if campaign is None:
@@ -53,7 +68,7 @@ async def get_campaign_settings(db: AsyncSession, campaign_id: uuid.UUID) -> Cam
         timezone=campaign.timezone,
         max_attempts=campaign.max_attempts,
         allowed_days=voice_config.get("allowed_days") or DEFAULT_ALLOWED_DAYS,
-        retry_interval_hours=voice_config.get("retry_interval_hours", 4),
+        retry_interval_hours=_valid_retry_interval(voice_config.get("retry_interval_hours")),
     )
 
 
@@ -168,3 +183,24 @@ async def suppressed_hashes(db: AsyncSession) -> set[str]:
         )
     ).scalars()
     return set(rows)
+
+
+def _self_check() -> None:
+    """Run: uv run python -m services.campaign_settings_service"""
+    assert _valid_retry_interval(3) == 3
+    assert _valid_retry_interval(24) == 24
+    assert _valid_retry_interval(4) == 3, "the old default must snap to a valid one"
+    assert _valid_retry_interval(5) == 6
+    assert _valid_retry_interval(0) == 3
+    assert _valid_retry_interval(999) == 24
+    assert _valid_retry_interval(None) == 3
+    assert _valid_retry_interval("6") == 3, "non-int JSON falls back, never crashes"
+    assert _valid_retry_interval(True) == 3, "bool is an int subclass; must not rank as 1"
+    # Every result must be something the provider actually accepts.
+    for v in (None, 0, 4, 5, 7, 100, "x", True, 3, 24):
+        assert _valid_retry_interval(v) in (3, 6, 9, 12, 24)
+    print("campaign_settings_service self-check ok")
+
+
+if __name__ == "__main__":
+    _self_check()

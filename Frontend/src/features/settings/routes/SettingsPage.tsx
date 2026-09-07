@@ -28,6 +28,11 @@ import { DAYS, TIMEZONES, type CampaignSettings } from '../schemas/campaign-sett
  * The selected campaign lives in the URL (?campaign=…) so a configured
  * campaign is a shareable link and survives a refresh.
  */
+// The calling provider accepts only these values and rejects anything else
+// with a 422 at dial time, so the field is a fixed choice, not a free number.
+const RETRY_INTERVAL_OPTIONS = [3, 6, 9, 12, 24] as const
+type RetryIntervalHours = (typeof RETRY_INTERVAL_OPTIONS)[number]
+
 export function SettingsPage() {
   const campaigns = useCampaigns()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -254,17 +259,21 @@ function SettingsForm({ campaignId }: { readonly campaignId: string }) {
           </label>
           <label className="flex flex-col gap-1">
             <span className="text-[12px] text-[var(--color-ink-muted)]">Hours between retries</span>
-            <Input
-              type="number"
-              min={0}
-              max={168}
-              value={draft.retryIntervalHours}
-              onChange={(event) =>
-                set('retryIntervalHours', Math.min(168, Math.max(0, Number(event.target.value) || 0)))
-              }
-              className="w-28"
-              aria-label="Hours between retries"
-            />
+            <Select
+              value={String(draft.retryIntervalHours)}
+              onValueChange={(value) => set('retryIntervalHours', Number(value) as RetryIntervalHours)}
+            >
+              <SelectTrigger className="w-28" aria-label="Hours between retries">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {RETRY_INTERVAL_OPTIONS.map((hours) => (
+                  <SelectItem key={hours} value={String(hours)}>
+                    {hours}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </label>
         </div>
       </Section>

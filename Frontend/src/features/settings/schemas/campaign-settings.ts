@@ -8,7 +8,8 @@ export const campaignSettingsSchema = z.object({
   timezone: z.string(),
   maxAttempts: z.number().int().min(1).max(10),
   allowedDays: z.array(z.string()),
-  retryIntervalHours: z.number().int().min(0).max(168),
+  // Must match the provider's allowed set — see RETRY_INTERVAL_OPTIONS.
+  retryIntervalHours: z.union([z.literal(3), z.literal(6), z.literal(9), z.literal(12), z.literal(24)]),
 })
 export type CampaignSettings = z.infer<typeof campaignSettingsSchema>
 
