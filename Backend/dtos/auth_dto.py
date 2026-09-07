@@ -18,6 +18,16 @@ class LoginRequestDTO(BaseModel):
 
 class LoginResponseDTO(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
     email: str
     role: str
+
+
+class RefreshRequestDTO(BaseModel):
+    refresh_token: str = Field(min_length=1)
+
+
+class RefreshResponseDTO(BaseModel):
+    access_token: str
+    token_type: str = "bearer"

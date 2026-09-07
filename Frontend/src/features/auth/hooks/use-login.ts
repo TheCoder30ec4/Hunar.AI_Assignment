@@ -14,7 +14,10 @@ export function useLogin() {
   return useMutation({
     mutationFn: (credentials: LoginFormValues) => login(credentials),
     onSuccess: (response) => {
-      storeLogin(response.access_token, { email: response.email, role: response.role })
+      storeLogin(response.access_token, response.refresh_token, {
+        email: response.email,
+        role: response.role,
+      })
     },
   })
 }

@@ -92,7 +92,6 @@ export function ProviderPlanTable({
       {plan.data ? (
         <PlanDetails
           plan={plan.data}
-          resultsNeeded={resultsNeeded}
           onRun={() => onRun(resultsNeeded)}
         />
       ) : null}
@@ -102,7 +101,6 @@ export function ProviderPlanTable({
 
 function PlanDetails({
   plan,
-  resultsNeeded,
   onRun,
 }: {
   readonly plan: {
@@ -112,7 +110,6 @@ function PlanDetails({
     readonly enrich_credit_cap: number
     readonly exceeds_credit_cap: boolean
   }
-  readonly resultsNeeded: number
   readonly onRun: () => void
 }) {
   const enrichRow = plan.rows.find((row) => row.provider === 'enrich')

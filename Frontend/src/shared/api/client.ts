@@ -1,6 +1,6 @@
 import type { z } from 'zod'
 
-import { getAuthToken, clearAuthToken } from './auth-token'
+import { clearAuthTokens, getAuthToken, getRefreshToken, setAccessToken } from './auth-token'
 import { ApiErrorException, apiErrorFromStatus, apiErrorFromThrown } from './errors'
 
 const BASE_URL = import.meta.env['VITE_API_BASE_URL'] ?? '/api'
@@ -14,6 +14,8 @@ export interface ApiFetchOptions<T> {
   readonly method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | undefined
   readonly body?: unknown
   readonly headers?: Readonly<Record<string, string>> | undefined
+  /** Internal: set on the retry attempt so a second 401 doesn't loop forever. */
+  readonly _isRetry?: boolean
 }
 
 function authHeaders(): Record<string, string> {
@@ -23,6 +25,35 @@ function authHeaders(): Record<string, string> {
   return typeof token === 'string' && token.length > 0
     ? { Authorization: `Bearer ${token}` }
     : {}
+}
+
+/**
+ * Exchanges the stored refresh token for a new access token. Deliberately a
+ * raw fetch, not apiFetch — apiFetch's own 401 handling calls this, so a
+ * dependency the other way would recurse.
+ */
+async function refreshAccessToken(): Promise<boolean> {
+  const refreshToken = getRefreshToken()
+  if (!refreshToken) return false
+
+  try {
+    const response = await fetch(`${BASE_URL}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    })
+    if (!response.ok) return false
+    const payload: unknown = await response.json()
+    const accessToken =
+      typeof payload === 'object' && payload !== null && 'access_token' in payload
+        ? (payload as { access_token: unknown }).access_token
+        : null
+    if (typeof accessToken !== 'string' || accessToken.length === 0) return false
+    setAccessToken(accessToken)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** Pull a useful message + field errors out of an error response body. */
@@ -53,9 +84,15 @@ async function describeFailure(
  * Four third-party people-search providers sit behind this backend, so the data
  * WILL be inconsistent. Every response is Zod-parsed here — parse, don't trust.
  * That is what keeps `any` out of every feature above this line.
+ *
+ * A 401 triggers exactly one silent refresh-and-retry (access tokens are
+ * short-lived by design — see Backend/core/auth_config.py — so an expired
+ * one is the common case, not an error). A second 401 after that retry, or a
+ * missing/expired refresh token, drops both tokens and surfaces the 401 so
+ * RequireAuth sends the user back to /login.
  */
 export async function apiFetch<T>(path: string, options: ApiFetchOptions<T>): Promise<T> {
-  const { schema, signal, method = 'GET', body, headers } = options
+  const { schema, signal, method = 'GET', body, headers, _isRetry = false } = options
 
   // AbortSignal.any is native: whichever fires first (caller navigating away,
   // or our 30s ceiling) aborts the request.
@@ -79,11 +116,16 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions<T>): Pr
   }
 
   if (!response.ok) {
+    if (response.status === 401 && !_isRetry && path !== '/auth/refresh' && path !== '/auth/login') {
+      const refreshed = await refreshAccessToken()
+      if (refreshed) return apiFetch(path, { ...options, _isRetry: true })
+    }
+
     const { message, fieldErrors } = await describeFailure(response)
-    // A 401 means the stored token is missing/expired/invalid — drop it so the
-    // next render's auth check sends the user back to /login instead of
-    // silently retrying the same dead token forever.
-    if (response.status === 401) clearAuthToken()
+    // Still a 401 after a refresh attempt (or no refresh token to try) —
+    // the session is genuinely over. Drop both tokens so the next render's
+    // auth check sends the user back to /login instead of retrying forever.
+    if (response.status === 401) clearAuthTokens()
     throw apiErrorFromStatus(response.status, message, fieldErrors)
   }
 

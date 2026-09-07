@@ -1,13 +1,11 @@
 import { http, HttpResponse } from 'msw'
 
-import type { CandidatePage } from '@/shared/types/domain'
-
 import { generateCandidates } from './fixtures/candidates'
 
 /* MSW v2 syntax throughout: http.get(path, ({ request, params }) => HttpResponse.json(...)).
    The v1 rest.get / res(ctx.json()) form does not exist any more. */
 
-/** Still mocked: candidate detail + suppression fixtures (no backend yet). */
+/** Still mocked: candidate detail fixtures only (no backend for those yet). */
 const SMALL_RESULT_SET = generateCandidates({ count: 87, seed: 1337 })
 
 /**
@@ -20,11 +18,16 @@ const SMALL_RESULT_SET = generateCandidates({ count: 87, seed: 1337 })
 const REAL_BACKEND_URL = 'http://localhost:8000'
 
 async function proxyToRealBackend(request: Request, backendPath: string) {
+  // GET and DELETE carry no body — forwarding an empty string as one makes
+  // some servers reject the request outright.
+  const hasBody = request.method !== 'GET' && request.method !== 'DELETE'
   const response = await fetch(`${REAL_BACKEND_URL}${backendPath}`, {
     method: request.method,
     headers: { 'Content-Type': 'application/json' },
-    ...(request.method === 'GET' ? {} : { body: await request.text() }),
+    ...(hasBody ? { body: await request.text() } : {}),
   })
+  // 204 has no body to read back, and HttpResponse rejects one on 204.
+  if (response.status === 204) return new HttpResponse(null, { status: 204 })
   const body = await response.text()
   return new HttpResponse(body, {
     status: response.status,
@@ -52,6 +55,8 @@ async function proxyStreamToRealBackend(request: Request, backendPath: string) {
 
 export const handlers = [
   http.post('/api/auth/login', ({ request }) => proxyToRealBackend(request, '/auth/login')),
+  http.post('/api/auth/refresh', ({ request }) => proxyToRealBackend(request, '/auth/refresh')),
+  http.post('/api/auth/logout', ({ request }) => proxyToRealBackend(request, '/auth/logout')),
 
   http.post('/api/searches/parse-jd', ({ request }) =>
     proxyToRealBackend(request, '/searches/parse-jd'),
@@ -76,6 +81,24 @@ export const handlers = [
   http.post('/api/campaigns', ({ request }) => proxyToRealBackend(request, '/campaigns')),
   http.get('/api/campaigns/:campaignId', ({ request, params }) =>
     proxyToRealBackend(request, `/campaigns/${String(params['campaignId'])}`),
+  ),
+  http.get('/api/campaigns/:campaignId/settings', ({ request, params }) =>
+    proxyToRealBackend(request, `/campaigns/${String(params['campaignId'])}/settings`),
+  ),
+  http.put('/api/campaigns/:campaignId/settings', ({ request, params }) =>
+    proxyToRealBackend(request, `/campaigns/${String(params['campaignId'])}/settings`),
+  ),
+  http.get('/api/campaigns/:campaignId/calls', ({ request, params }) =>
+    proxyToRealBackend(request, `/campaigns/${String(params['campaignId'])}/calls`),
+  ),
+  http.get('/api/campaigns/:campaignId/calls/:candidateId', ({ request, params }) =>
+    proxyToRealBackend(
+      request,
+      `/campaigns/${String(params['campaignId'])}/calls/${String(params['candidateId'])}`,
+    ),
+  ),
+  http.post('/api/campaigns/:campaignId/calls/stream', ({ request, params }) =>
+    proxyStreamToRealBackend(request, `/campaigns/${String(params['campaignId'])}/calls/stream`),
   ),
 
   http.post('/api/searches', ({ request }) => proxyToRealBackend(request, '/searches')),
@@ -102,12 +125,9 @@ export const handlers = [
     return HttpResponse.json(candidate)
   }),
 
-  http.get('/api/suppression', () =>
-    HttpResponse.json({
-      rows: SMALL_RESULT_SET.filter((row) => row.suppressed),
-      total: SMALL_RESULT_SET.filter((row) => row.suppressed).length,
-      providersSucceeded: ['pdl'],
-      providersFailed: [],
-    } satisfies CandidatePage),
+  http.get('/api/suppression', ({ request }) => proxyToRealBackend(request, '/suppression')),
+  http.post('/api/suppression', ({ request }) => proxyToRealBackend(request, '/suppression')),
+  http.delete('/api/suppression/:entryId', ({ request, params }) =>
+    proxyToRealBackend(request, `/suppression/${String(params['entryId'])}`),
   ),
 ]

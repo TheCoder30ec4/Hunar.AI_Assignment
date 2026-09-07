@@ -10,6 +10,7 @@ export type LoginFormValues = z.infer<typeof loginFormSchema>
 /** What POST /auth/login actually returns. Matches Backend's LoginResponseDTO. */
 export const loginResponseSchema = z.object({
   access_token: z.string(),
+  refresh_token: z.string(),
   token_type: z.string(),
   email: z.string(),
   role: z.enum(['admin', 'user']),

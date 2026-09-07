@@ -74,6 +74,20 @@ export function DropdownMenuCheckboxItem({
   )
 }
 
+/** A non-interactive heading inside the menu — used for the signed-in
+ * account block above the actions. */
+export function DropdownMenuLabel({
+  className,
+  ...props
+}: ComponentProps<typeof DropdownMenuPrimitive.Label>) {
+  return (
+    <DropdownMenuPrimitive.Label
+      className={cn('px-2 py-1.5 text-[12px] font-medium text-[var(--color-ink-muted)]', className)}
+      {...props}
+    />
+  )
+}
+
 export function DropdownMenuSeparator({
   className,
   ...props

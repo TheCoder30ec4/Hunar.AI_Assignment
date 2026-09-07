@@ -107,7 +107,7 @@ export const router = createBrowserRouter([
             },
           },
           {
-            path: 'settings/:tab',
+            path: 'settings',
             errorElement: <RouteErrorBoundary />,
             lazy: async () => {
               const { SettingsPage } = await import('@/features/settings/routes/SettingsPage')
